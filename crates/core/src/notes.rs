@@ -154,9 +154,10 @@ pub fn annotate_meeting(meeting_path: &Path, text: &str) -> Result<(), String> {
 
     let mut content = fs::read_to_string(meeting_path).map_err(|e| e.to_string())?;
 
-    // Find ## Notes section and append, or create it
-    if let Some(pos) = content.find("## Notes") {
-        // Find the end of the Notes section (next ## or end of file)
+    // Find ## Notes section header (anchored to line start to avoid matching inside transcript)
+    if let Some(pos) = content.find("\n## Notes") {
+        let pos = pos + 1; // skip the leading newline
+                           // Find the end of the Notes section (next ## or end of file)
         let notes_start = pos + "## Notes".len();
         let next_section = content[notes_start..]
             .find("\n## ")

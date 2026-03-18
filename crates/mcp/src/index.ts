@@ -257,9 +257,18 @@ server.tool(
   {
     path: z.string().describe("Path to the meeting markdown file"),
   },
-  async ({ path }) => {
+  async ({ path: filePath }) => {
     try {
-      const content = await readFile(path, "utf-8");
+      // Security: validate path is within ~/meetings/ and is a .md file
+      const { resolve } = await import("path");
+      const resolved = resolve(filePath);
+      const meetingsDir = resolve(join(homedir(), "meetings"));
+      if (!resolved.startsWith(meetingsDir) || !resolved.endsWith(".md")) {
+        return {
+          content: [{ type: "text" as const, text: "Access denied: path must be within ~/meetings/ and end with .md" }],
+        };
+      }
+      const content = await readFile(resolved, "utf-8");
       return { content: [{ type: "text" as const, text: content }] };
     } catch (error: any) {
       return {
@@ -280,7 +289,23 @@ server.tool(
     title: z.string().optional().describe("Optional title"),
   },
   async ({ file_path, type: contentType, title }) => {
-    const args = ["process", file_path, "-t", contentType];
+    // Security: validate file path is in allowed directories
+    const { resolve } = await import("path");
+    const resolved = resolve(file_path);
+    const allowedDirs = [
+      resolve(join(homedir(), ".minutes", "inbox")),
+      resolve(join(homedir(), "meetings")),
+      resolve(join(homedir(), "Downloads")),
+    ];
+    const audioExts = [".wav", ".m4a", ".mp3", ".ogg", ".webm"];
+    const ext = resolved.slice(resolved.lastIndexOf(".")).toLowerCase();
+    if (!allowedDirs.some((d) => resolved.startsWith(d)) || !audioExts.includes(ext)) {
+      return {
+        content: [{ type: "text" as const, text: "Access denied: file must be in ~/meetings/, ~/.minutes/inbox/, or ~/Downloads/ with a valid audio extension" }],
+      };
+    }
+
+    const args = ["process", resolved, "-t", contentType];
     if (title) args.push("--title", title);
 
     try {

@@ -255,18 +255,23 @@ fn cmd_stop(_config: &Config) -> Result<()> {
             eprintln!("Stopping recording (PID {})...", pid);
 
             // Send SIGTERM to the recording process
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+            let rc = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+            if rc != 0 {
+                let err = std::io::Error::last_os_error();
+                anyhow::bail!("could not signal recording process (PID {}): {}", pid, err);
             }
 
-            // Poll for PID file removal (recording process cleans up on exit)
+            // Poll for PID file removal with progress feedback
             let timeout = std::time::Duration::from_secs(120);
             let start = std::time::Instant::now();
             let pid_path = minutes_core::pid::pid_path();
 
+            eprint!("Transcribing");
             while pid_path.exists() && start.elapsed() < timeout {
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                eprint!(".");
             }
+            eprintln!();
 
             if pid_path.exists() {
                 anyhow::bail!("recording process did not stop within 120 seconds");
@@ -433,27 +438,17 @@ fn cmd_process(
 fn cmd_watch(dir: Option<&Path>, config: &Config) -> Result<()> {
     config.ensure_dirs()?;
 
-    // Set up Ctrl-C handler to exit gracefully
-    let (tx, rx) = std::sync::mpsc::channel();
+    // Set up Ctrl-C to release the lock and exit cleanly
     ctrlc::set_handler(move || {
-        tx.send(()).ok();
+        eprintln!("\nStopping watcher...");
+        // Release the watch lock before exiting
+        let lock_path = minutes_core::watch::lock_path();
+        std::fs::remove_file(&lock_path).ok();
+        std::process::exit(0);
     })?;
 
-    // Run watcher in a separate thread so we can catch Ctrl-C
-    let config_clone = config.clone();
-    let dir_clone = dir.map(|d| d.to_path_buf());
-    let watcher_thread =
-        std::thread::spawn(move || minutes_core::watch::run(dir_clone.as_deref(), &config_clone));
-
-    // Wait for Ctrl-C
-    rx.recv().ok();
-    eprintln!("\nStopping watcher...");
-
-    // The watcher thread will be cleaned up when the process exits
-    // The LockGuard in watch.rs will release the lock on drop
-    drop(watcher_thread);
-
-    Ok(())
+    // Run watcher directly (blocks until interrupted)
+    minutes_core::watch::run(dir, config).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 fn cmd_devices() -> Result<()> {

@@ -74,7 +74,7 @@ fn release_lock() {
 }
 
 fn is_process_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    crate::pid::is_process_alive(pid)
 }
 
 /// Check if a file has a watched extension.

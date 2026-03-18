@@ -91,7 +91,7 @@ fn cleanup_stale() -> Result<(), PidError> {
 }
 
 /// Check if a process with the given PID is alive.
-fn is_process_alive(pid: u32) -> bool {
+pub fn is_process_alive(pid: u32) -> bool {
     // kill(pid, 0) checks if the process exists without sending a signal
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }

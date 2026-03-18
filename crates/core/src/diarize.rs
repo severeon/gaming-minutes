@@ -128,30 +128,29 @@ fn diarize_with_pyannote(
     // Check if Python is available
     let python = find_python()?;
 
-    let script = format!(
-        r#"
+    // Security: pass audio path as sys.argv[1], never interpolate into source code.
+    // A crafted filename with quotes/backticks could inject arbitrary Python otherwise.
+    let script = r#"
 import json, sys
 try:
     from pyannote.audio import Pipeline
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",
                                          use_auth_token=False)
-    diarization = pipeline("{audio_path}")
+    diarization = pipeline(sys.argv[1])
     segments = []
     for turn, _, speaker in diarization.itertracks(yield_label=True):
-        segments.append({{"speaker": speaker, "start": turn.start, "end": turn.end}})
+        segments.append({"speaker": speaker, "start": turn.start, "end": turn.end})
     print(json.dumps(segments))
 except ImportError:
     print("ERROR: pyannote.audio not installed. Run: pip install pyannote.audio", file=sys.stderr)
     sys.exit(1)
 except Exception as e:
-    print(f"ERROR: {{e}}", file=sys.stderr)
+    print(f"ERROR: {e}", file=sys.stderr)
     sys.exit(1)
-"#,
-        audio_path = audio_path.display()
-    );
+"#;
 
     let output = std::process::Command::new(&python)
-        .args(["-c", &script])
+        .args(["-c", script, audio_path.to_str().unwrap_or("")])
         .output()?;
 
     if !output.status.success() {

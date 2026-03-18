@@ -148,8 +148,14 @@ fn extract_field(frontmatter: &str, key: &str) -> Option<String> {
 
 /// Extract a snippet around the first match of the query.
 fn extract_snippet(body: &str, query: &str) -> String {
-    let lower = body.to_lowercase();
-    if let Some(pos) = lower.find(query) {
+    // Find the query in the body case-insensitively.
+    // We search the original body to avoid byte-offset mismatch from to_lowercase().
+    let pos = body
+        .char_indices()
+        .position(|(i, _)| body[i..].to_lowercase().starts_with(query))
+        .and_then(|char_idx| body.char_indices().nth(char_idx).map(|(i, _)| i));
+
+    if let Some(pos) = pos {
         let start = body[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
         let end = body[pos..]
             .find('\n')
@@ -157,8 +163,9 @@ fn extract_snippet(body: &str, query: &str) -> String {
             .unwrap_or(body.len());
 
         let line = body[start..end].trim();
-        if line.len() > 200 {
-            format!("{}...", &line[..200])
+        if line.chars().count() > 200 {
+            let truncated: String = line.chars().take(200).collect();
+            format!("{}...", truncated)
         } else {
             line.to_string()
         }

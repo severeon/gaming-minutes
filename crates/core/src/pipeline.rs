@@ -43,6 +43,25 @@ pub fn process(
         return Err(crate::error::TranscribeError::EmptyAudio.into());
     }
 
+    // Security: verify file is in an allowed directory (prevents path traversal via MCP)
+    if let Ok(canonical) = audio_path.canonicalize() {
+        let allowed = &config.security.allowed_audio_dirs;
+        if !allowed.is_empty() {
+            let in_allowed = allowed.iter().any(|dir| {
+                dir.canonicalize()
+                    .map(|d| canonical.starts_with(&d))
+                    .unwrap_or(false)
+            });
+            if !in_allowed {
+                return Err(crate::error::TranscribeError::UnsupportedFormat(format!(
+                    "file not in allowed directories: {}",
+                    audio_path.display()
+                ))
+                .into());
+            }
+        }
+    }
+
     // Step 1: Transcribe (always)
     tracing::info!(step = "transcribe", file = %audio_path.display(), "transcribing audio");
     let step_start = std::time::Instant::now();
@@ -197,8 +216,9 @@ fn generate_title(transcript: &str) -> String {
     let words: Vec<&str> = first_line.split_whitespace().take(8).collect();
     let title = words.join(" ");
 
-    if title.len() > 60 {
-        format!("{}...", &title[..57])
+    if title.chars().count() > 60 {
+        let truncated: String = title.chars().take(57).collect();
+        format!("{}...", truncated)
     } else {
         title
     }

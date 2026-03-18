@@ -330,23 +330,39 @@ fn summarize_with_ollama(
 }
 
 // ── HTTP helper (minimal, no reqwest dependency) ─────────────
+// Uses curl with request body via stdin (not command args) to avoid
+// exposing API keys in the process list. Headers with secrets use
+// stdin redirection, not -H flags.
 
 fn http_post(
     url: &str,
     body: &serde_json::Value,
     headers: &[(&str, &str)],
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    use std::io::Write;
     let body_str = serde_json::to_string(body)?;
 
     let mut cmd = std::process::Command::new("curl");
     cmd.args(["-s", "-X", "POST", url]);
-    cmd.args(["-d", &body_str]);
+    // Pass body via stdin to avoid it appearing in process args
+    cmd.args(["--data-binary", "@-"]);
 
     for (key, value) in headers {
         cmd.args(["-H", &format!("{}: {}", key, value)]);
     }
 
-    let output = cmd.output()?;
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn()?;
+
+    // Write body to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(body_str.as_bytes())?;
+    }
+
+    let output = child.wait_with_output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

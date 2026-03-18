@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::diarize;
 use crate::error::MinutesError;
 use crate::markdown::{self, ContentType, Frontmatter, OutputStatus, WriteResult};
 use crate::summarize;
@@ -65,11 +66,17 @@ pub fn process(
         Some(OutputStatus::TranscriptOnly)
     };
 
-    // Step 2: Diarize (Phase 1b, optional — currently skipped)
-    // if config.diarization.engine != "none" {
-    //     tracing::info!(step = "diarize", "running speaker diarization");
-    //     let speakers = diarize::run(audio_path, config)?;
-    // }
+    // Step 2: Diarize (optional — depends on config.diarization.engine)
+    let transcript = if config.diarization.engine != "none" {
+        tracing::info!(step = "diarize", "running speaker diarization");
+        if let Some(result) = diarize::diarize(audio_path, config) {
+            diarize::apply_speakers(&transcript, &result)
+        } else {
+            transcript
+        }
+    } else {
+        transcript
+    };
 
     // Step 3: Summarize (optional — depends on config.summarization.engine)
     let summary: Option<String> = if config.summarization.engine != "none" {

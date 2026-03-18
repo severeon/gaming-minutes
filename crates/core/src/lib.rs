@@ -1,5 +1,6 @@
 pub mod capture;
 pub mod config;
+pub mod diarize;
 pub mod error;
 pub mod logging;
 pub mod markdown;

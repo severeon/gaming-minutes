@@ -1,0 +1,29 @@
+{
+  "name": "minutes",
+  "version": "0.1.0",
+  "description": "Conversation memory for AI assistants — record, transcribe, search meetings and voice memos",
+  "skills": [
+    {
+      "name": "record",
+      "path": "skills/record/SKILL.md"
+    },
+    {
+      "name": "search",
+      "path": "skills/search/SKILL.md"
+    },
+    {
+      "name": "list",
+      "path": "skills/list/SKILL.md"
+    },
+    {
+      "name": "recap",
+      "path": "skills/recap/SKILL.md"
+    }
+  ],
+  "agents": [
+    {
+      "name": "meeting-analyst",
+      "path": "agents/meeting-analyst.md"
+    }
+  ]
+}

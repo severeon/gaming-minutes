@@ -48,6 +48,8 @@ pub struct Frontmatter {
     pub calendar_event: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub people: Vec<String>,
+    #[serde(default, skip_serializing_if = "EntityLinks::is_empty")]
+    pub entities: EntityLinks,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -56,6 +58,28 @@ pub struct Frontmatter {
     pub decisions: Vec<Decision>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intents: Vec<Intent>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EntityLinks {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub people: Vec<EntityRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<EntityRef>,
+}
+
+impl EntityLinks {
+    pub fn is_empty(&self) -> bool {
+        self.people.is_empty() && self.projects.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityRef {
+    pub slug: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
 }
 
 /// A structured action item extracted from a meeting.
@@ -292,6 +316,7 @@ mod tests {
             attendees: vec![],
             calendar_event: None,
             people: vec![],
+            entities: EntityLinks::default(),
             context: None,
             action_items: vec![],
             decisions: vec![],
@@ -395,6 +420,37 @@ mod tests {
         assert!(content.contains("kind: commitment"));
         assert!(content.contains("who: sarah"));
         assert!(content.contains("by_date: Tuesday"));
+    }
+
+    #[test]
+    fn frontmatter_serializes_entities_when_present() {
+        let dir = TempDir::new().unwrap();
+        let config = Config {
+            output_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        let mut fm = test_frontmatter();
+        fm.people = vec!["Alex Chen".into()];
+        fm.entities = EntityLinks {
+            people: vec![EntityRef {
+                slug: "sarah-chen".into(),
+                label: "Alex Chen".into(),
+                aliases: vec!["sarah".into()],
+            }],
+            projects: vec![EntityRef {
+                slug: "pricing-review".into(),
+                label: "Pricing Review".into(),
+                aliases: vec!["pricing".into()],
+            }],
+        };
+
+        let result = write(&fm, "Transcript", None, None, &config).unwrap();
+        let content = fs::read_to_string(&result.path).unwrap();
+        assert!(content.contains("entities:"));
+        assert!(content.contains("slug: sarah-chen"));
+        assert!(content.contains("label: Alex Chen"));
+        assert!(content.contains("slug: pricing-review"));
     }
 
     #[test]

@@ -7,6 +7,7 @@ use crate::notes;
 use crate::summarize;
 use crate::transcribe;
 use chrono::Local;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 // ──────────────────────────────────────────────────────────────
@@ -172,6 +173,20 @@ where
     let auto_title = title
         .map(String::from)
         .unwrap_or_else(|| generate_title(&transcript, pre_context.as_deref()));
+    let entities = build_entity_links(
+        &auto_title,
+        pre_context.as_deref(),
+        &[],
+        &structured_actions,
+        &structured_decisions,
+        &structured_intents,
+        &[],
+    );
+    let people = entities
+        .people
+        .iter()
+        .map(|entity| entity.label.clone())
+        .collect();
 
     let frontmatter = Frontmatter {
         title: auto_title,
@@ -186,7 +201,8 @@ where
         tags: vec![],
         attendees: vec![],
         calendar_event: None,
-        people: vec![],
+        people,
+        entities,
         context: pre_context,
         action_items: structured_actions,
         decisions: structured_decisions,
@@ -573,6 +589,170 @@ fn infer_topic(text: &str) -> Option<String> {
     }
 }
 
+fn build_entity_links(
+    title: &str,
+    pre_context: Option<&str>,
+    attendees: &[String],
+    action_items: &[markdown::ActionItem],
+    decisions: &[markdown::Decision],
+    intents: &[markdown::Intent],
+    tags: &[String],
+) -> markdown::EntityLinks {
+    let mut people: BTreeMap<String, (String, BTreeSet<String>)> = BTreeMap::new();
+    let mut projects: BTreeMap<String, (String, BTreeSet<String>)> = BTreeMap::new();
+
+    for attendee in attendees {
+        add_person_entity(&mut people, attendee);
+    }
+    for item in action_items {
+        add_person_entity(&mut people, &item.assignee);
+    }
+    for intent in intents {
+        if let Some(who) = &intent.who {
+            add_person_entity(&mut people, who);
+        }
+    }
+
+    for decision in decisions {
+        if let Some(topic) = &decision.topic {
+            add_project_entity(&mut projects, topic, Some(&decision.text));
+        } else {
+            add_project_entity(&mut projects, &decision.text, None);
+        }
+    }
+    if let Some(context) = pre_context {
+        add_project_entity(&mut projects, context, None);
+    }
+    add_project_entity(&mut projects, title, None);
+    for tag in tags {
+        add_project_entity(&mut projects, tag, None);
+    }
+
+    markdown::EntityLinks {
+        people: people
+            .into_iter()
+            .map(|(slug, (label, aliases))| markdown::EntityRef {
+                slug,
+                label,
+                aliases: aliases.into_iter().collect(),
+            })
+            .collect(),
+        projects: projects
+            .into_iter()
+            .map(|(slug, (label, aliases))| markdown::EntityRef {
+                slug,
+                label,
+                aliases: aliases.into_iter().collect(),
+            })
+            .collect(),
+    }
+}
+
+fn add_person_entity(entities: &mut BTreeMap<String, (String, BTreeSet<String>)>, raw: &str) {
+    let trimmed = raw.trim().trim_start_matches('@').trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("unassigned") {
+        return;
+    }
+
+    let label = trimmed
+        .split_whitespace()
+        .map(capitalize_token)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let slug = slugify(&label);
+    if slug.is_empty() {
+        return;
+    }
+
+    let entry = entities
+        .entry(slug)
+        .or_insert_with(|| (label.clone(), BTreeSet::new()));
+    entry.1.insert(trimmed.to_lowercase());
+    if raw.trim() != trimmed {
+        entry.1.insert(raw.trim().to_lowercase());
+    }
+}
+
+fn add_project_entity(
+    entities: &mut BTreeMap<String, (String, BTreeSet<String>)>,
+    raw: &str,
+    alias_source: Option<&str>,
+) {
+    let normalized = normalize_entity_topic(raw);
+    if normalized.is_empty() {
+        return;
+    }
+
+    let generic = [
+        "untitled recording",
+        "follow up",
+        "another follow up",
+        "voice memo",
+        "meeting",
+        "recording",
+    ];
+    if generic.contains(&normalized.as_str()) {
+        return;
+    }
+
+    let label = normalized
+        .split_whitespace()
+        .map(capitalize_token)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let slug = slugify(&label);
+    if slug.is_empty() {
+        return;
+    }
+
+    let entry = entities
+        .entry(slug)
+        .or_insert_with(|| (label.clone(), BTreeSet::new()));
+    entry.1.insert(normalized.clone());
+    if let Some(alias) = alias_source {
+        let cleaned = normalize_space(alias);
+        if !cleaned.is_empty() {
+            entry.1.insert(cleaned.to_lowercase());
+        }
+    }
+}
+
+fn capitalize_token(token: &str) -> String {
+    let lower = token.to_lowercase();
+    let mut chars = lower.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+fn slugify(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn normalize_entity_topic(text: &str) -> String {
+    let stopwords = [
+        "a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to",
+        "with", "we", "should", "will", "be", "is", "are", "use", "using",
+    ];
+
+    text.split_whitespace()
+        .map(|word| word.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|word| !word.is_empty())
+        .filter(|word| !stopwords.contains(&word.to_lowercase().as_str()))
+        .take(4)
+        .map(|word| word.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,5 +881,54 @@ mod tests {
         assert_eq!(intents[3].kind, markdown::IntentKind::Commitment);
         assert_eq!(intents[3].who.as_deref(), Some("sarah"));
         assert_eq!(intents[3].by_date.as_deref(), Some("Tuesday"));
+    }
+
+    #[test]
+    fn build_entity_links_derives_people_and_projects() {
+        let action_items = vec![markdown::ActionItem {
+            assignee: "mat".into(),
+            task: "Send pricing doc".into(),
+            due: Some("Friday".into()),
+            status: "open".into(),
+        }];
+        let decisions = vec![markdown::Decision {
+            text: "Launch pricing at monthly billing per month".into(),
+            topic: Some("pricing strategy".into()),
+        }];
+        let intents = vec![markdown::Intent {
+            kind: markdown::IntentKind::Commitment,
+            what: "Share revised pricing model".into(),
+            who: Some("Alex Chen".into()),
+            status: "open".into(),
+            by_date: Some("Tuesday".into()),
+        }];
+
+        let entities = build_entity_links(
+            "Q2 Pricing Discussion",
+            Some("pricing review with Alex"),
+            &["Case Wintermute".into()],
+            &action_items,
+            &decisions,
+            &intents,
+            &["advisor-platform".into()],
+        );
+
+        assert!(entities
+            .people
+            .iter()
+            .any(|entity| entity.slug == "jordan-m"));
+        assert!(entities.people.iter().any(|entity| entity.slug == "mat"));
+        assert!(entities
+            .people
+            .iter()
+            .any(|entity| entity.slug == "sarah-chen"));
+        assert!(entities
+            .projects
+            .iter()
+            .any(|entity| entity.slug == "pricing-strategy"));
+        assert!(entities
+            .projects
+            .iter()
+            .any(|entity| entity.slug == "advisor-platform"));
     }
 }

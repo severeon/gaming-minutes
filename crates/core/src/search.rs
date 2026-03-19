@@ -395,6 +395,17 @@ pub fn person_profile(config: &Config, person: &str) -> Result<PersonProfile, Se
             .attendees
             .iter()
             .any(|attendee| attendee.to_lowercase().contains(&person_lower));
+        let linked_person_match = frontmatter
+            .people
+            .iter()
+            .any(|person| person.to_lowercase().contains(&person_lower))
+            || frontmatter.entities.people.iter().any(|entity| {
+                entity.label.to_lowercase().contains(&person_lower)
+                    || entity
+                        .aliases
+                        .iter()
+                        .any(|alias| alias.to_lowercase().contains(&person_lower))
+            });
         let owned_intent_match = frontmatter.intents.iter().any(|intent| {
             intent
                 .who
@@ -403,7 +414,7 @@ pub fn person_profile(config: &Config, person: &str) -> Result<PersonProfile, Se
                 .unwrap_or(false)
         });
 
-        if !(attendee_match || owned_intent_match) {
+        if !(attendee_match || linked_person_match || owned_intent_match) {
             continue;
         }
 
@@ -1070,5 +1081,24 @@ mod tests {
             .top_topics
             .iter()
             .any(|topic| topic.topic == "pricing"));
+    }
+
+    #[test]
+    fn person_profile_matches_linked_people_entities() {
+        let dir = TempDir::new().unwrap();
+        create_test_file(
+            dir.path(),
+            "2026-03-17-a.md",
+            "---\ntitle: Pricing Review\ntype: meeting\ndate: 2026-03-17T12:00:00-07:00\nduration: 42m\nstatus: complete\ntags: []\nattendees: []\npeople: [Alex Chen]\nentities:\n  people:\n    - slug: sarah-chen\n      label: Alex Chen\n      aliases: [sarah]\n  projects:\n    - slug: pricing-review\n      label: Pricing Review\n      aliases: [pricing]\naction_items: []\ndecisions:\n  - text: Launch pricing at monthly billing per month\n    topic: pricing\nintents: []\n---\n\n## Transcript\n\nWe discussed pricing.\n",
+        );
+
+        let config = Config {
+            output_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        let profile = person_profile(&config, "sarah").unwrap();
+        assert_eq!(profile.recent_meetings.len(), 1);
+        assert_eq!(profile.recent_meetings[0].title, "Pricing Review");
     }
 }

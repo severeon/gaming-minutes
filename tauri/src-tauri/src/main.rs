@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -114,6 +114,7 @@ fn main() {
         Arc::new(Mutex::new(commands::default_hotkey_shortcut().to_string()));
     let hotkey_runtime = Arc::new(Mutex::new(commands::HotkeyRuntime::default()));
     let discard_short_hotkey_capture = Arc::new(AtomicBool::new(false));
+    let screen_share_hidden = Arc::new(AtomicBool::new(true));
     let recording_clone = recording.clone();
     let stop_clone = stop_flag.clone();
 
@@ -196,6 +197,14 @@ fn main() {
             )?;
             let assistant_item =
                 MenuItem::with_id(app, "assistant", "AI Assistant", true, None::<&str>)?;
+            let screen_share_item = MenuItem::with_id(
+                app,
+                "screen-share-toggle",
+                "Hide from Screen Share ✓",
+                true,
+                None::<&str>,
+            )?;
+            let screen_share_item_ref = screen_share_item.clone();
             let sep2 = MenuItem::with_id(app, "sep2", "──────────", false, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Minutes", true, None::<&str>)?;
 
@@ -214,6 +223,7 @@ fn main() {
                     &paste_summary_item,
                     &paste_transcript_item,
                     &sep2,
+                    &screen_share_item,
                     &quit_item,
                 ],
             )?;
@@ -232,6 +242,8 @@ fn main() {
                     let rec_item = record_item_ref.clone();
                     let quick_item = quick_thought_item_ref.clone();
                     let stp_item = stop_item_ref.clone();
+                    let screen_share_hidden = screen_share_hidden.clone();
+                    let screen_share_item_ref = screen_share_item_ref.clone();
                     match event.id.as_ref() {
                         "open" => {
                             show_main_window(app);
@@ -392,6 +404,23 @@ fn main() {
                                         &err,
                                     );
                                 }
+                            }
+                        }
+                        "screen-share-toggle" => {
+                            let currently_hidden = screen_share_hidden.load(Ordering::Relaxed);
+                            let new_state = !currently_hidden;
+                            screen_share_hidden.store(new_state, Ordering::Relaxed);
+
+                            // Update menu label
+                            if new_state {
+                                screen_share_item_ref.set_text("Hide from Screen Share ✓").ok();
+                            } else {
+                                screen_share_item_ref.set_text("Hide from Screen Share").ok();
+                            }
+
+                            // Apply to all existing windows
+                            for (_, win) in app.webview_windows() {
+                                win.set_content_protected(new_state).ok();
                             }
                         }
                         "quit" => {

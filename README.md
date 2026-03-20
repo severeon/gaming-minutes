@@ -35,14 +35,14 @@ Open action items (2):
 ## How it works
 
 ```
-Audio → Transcribe → Diarize → Summarize → Structured Markdown
-         (local)     (speakers)   (LLM)       (decisions,
-        whisper.cpp   pyannote   Claude/       action items,
-                                 Ollama/       searchable)
-                                 OpenAI
+Audio → Transcribe → Summarize → Detect Attendees → Structured Markdown
+         (local)       (LLM)      (calendar +          (decisions,
+        whisper.cpp   Claude/      transcript)          action items,
+                      Ollama/                           people, entities)
+                      OpenAI
 ```
 
-Everything runs locally. Your audio never leaves your machine (unless you opt into cloud LLM summarization).
+Everything runs locally. Your audio never leaves your machine (unless you opt into cloud LLM summarization). Attendees are automatically detected from macOS Calendar events and participant extraction from the transcript.
 
 ## Install
 
@@ -215,7 +215,10 @@ Claude: [calls list_meetings] → scans frontmatter → reports open items
 
 No `ANTHROPIC_API_KEY`. No extra cost. Just your Claude subscription doing what it already does — but with your meeting history as context.
 
-### Claude Desktop (MCP)
+### Any MCP client (Claude Desktop, Cursor, Windsurf, your own agent)
+
+Minutes exposes a standard MCP server. Point any MCP-compatible client at it:
+
 ```json
 {
   "mcpServers": {
@@ -227,7 +230,11 @@ No `ANTHROPIC_API_KEY`. No extra cost. Just your Claude subscription doing what 
 }
 ```
 
-8 MCP tools: `start_recording`, `stop_recording`, `get_status`, `list_meetings`, `search_meetings`, `get_meeting`, `process_audio`, `add_note`
+**12 tools:** `start_recording`, `stop_recording`, `get_status`, `list_meetings`, `search_meetings`, `get_meeting`, `process_audio`, `add_note`, `consistency_report`, `get_person_profile`, `research_topic`, `qmd_collection_status`
+
+**6 resources:** `minutes://meetings/recent`, `minutes://status`, `minutes://actions/open`, `minutes://events/recent`, `minutes://meetings/{slug}`, `ui://minutes/dashboard`
+
+**Interactive dashboard (Claude Desktop):** 5 tools render an inline interactive UI via [MCP Apps](https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/apps) — meeting list with filter/search, detail view with fullscreen + "Send to Claude" context injection, person profiles, consistency reports. Text-only clients see the same data as plain text.
 
 ### Claude Code (Plugin)
 ```
@@ -328,7 +335,7 @@ ollama_url = "http://localhost:11434"
 ollama_model = "llama3.2"
 
 [diarization]
-engine = "pyannote"       # pyannote (best quality) or none
+engine = "none"           # "none" (default) or "pyannote" (requires pip install pyannote.audio + HuggingFace auth)
 
 [search]
 engine = "builtin"        # builtin (regex) or qmd (semantic)
@@ -351,14 +358,28 @@ agent_args = []           # Optional extra args, e.g. ["--dangerously-skip-permi
 
 ```
 minutes/
-├── crates/core/    12 Rust modules — the engine (shared by all interfaces)
-├── crates/cli/     CLI binary — 12 commands
-├── crates/mcp/     MCP server — 8 tools for Claude Desktop
+├── crates/core/    17 Rust modules — the engine (shared by all interfaces)
+├── crates/cli/     CLI binary — 15 commands
+├── crates/reader/  Lightweight read-only meeting parser (no audio deps)
+├── crates/mcp/     MCP server — 12 tools + 6 resources + interactive dashboard
+│   └── ui/         MCP App dashboard (vanilla TS → single-file HTML)
 ├── tauri/          Menu bar app — system tray, recording UI, singleton AI Assistant
 └── .claude/plugins/minutes/   Claude Code plugin — 11 skills + 1 agent + 2 hooks
 ```
 
 Single `minutes-core` library shared by CLI, MCP server, and Tauri app. Zero code duplication.
+
+### Building your own agent on Minutes
+
+Minutes is designed as infrastructure for AI agents. The MCP server is the primary integration surface:
+
+- **Read meetings**: `list_meetings`, `search_meetings`, `get_meeting` return structured JSON
+- **Track people**: `get_person_profile` builds cross-meeting profiles with topics, open commitments
+- **Monitor consistency**: `consistency_report` flags conflicting decisions and stale commitments
+- **Record + process**: `start_recording`, `stop_recording`, `process_audio` for pipeline control
+- **Resources**: Stable URIs (`minutes://meetings/recent`, `minutes://actions/open`) for agent context injection
+
+Any agent framework that speaks MCP can use Minutes as its conversation memory layer — the agent handles the intelligence, Minutes handles the recall.
 
 **Built with:** Rust, [whisper.cpp](https://github.com/ggerganov/whisper.cpp), [symphonia](https://github.com/pdeljanov/Symphonia), [cpal](https://github.com/RustAudio/cpal), [Tauri v2](https://v2.tauri.app/), [ureq](https://github.com/algesten/ureq)
 

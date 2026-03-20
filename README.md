@@ -283,6 +283,20 @@ ollama_model = "llama3.2"
 
 The `agent` engine shells out to your installed AI CLI — no API keys to manage, uses the same subscription you already have. Most users won't need this since Claude handles summarization conversationally via MCP.
 
+## Import from Granola
+
+Already using Granola? Import your meeting history:
+
+```bash
+# Preview what will be imported
+minutes import granola --dry-run
+
+# Import all Granola meetings to ~/meetings/
+minutes import granola
+```
+
+Reads from `~/.granola-archivist/output/` (the default Granola export location). Meetings are converted to Minutes' markdown format with YAML frontmatter. Duplicates are skipped automatically.
+
 ## Voice memos (iPhone → Mac)
 
 No iOS app needed. Use Apple's built-in Voice Memos + a Shortcut:

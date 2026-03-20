@@ -199,6 +199,21 @@ enum Commands {
         #[arg(short, long, default_value = "50")]
         lines: usize,
     },
+
+    /// Import meetings from another app (e.g., Granola)
+    Import {
+        /// Source app: granola
+        #[arg(value_parser = ["granola"])]
+        from: String,
+
+        /// Directory containing exported meetings (default: ~/.granola-archivist/output/)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+
+        /// Dry run: show what would be imported without copying
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -281,6 +296,7 @@ fn main() -> Result<()> {
         Commands::Qmd { action, collection } => cmd_qmd(&action, &collection, &config),
         Commands::Service { action } => cmd_service(&action),
         Commands::Logs { errors, lines } => cmd_logs(errors, lines),
+        Commands::Import { from, dir, dry_run } => cmd_import(&from, dir.as_deref(), dry_run, &config),
     }
 }
 
@@ -1310,3 +1326,179 @@ life (qmd://life/)
 }
 
 // Frontmatter parsing is in minutes_core::markdown::{split_frontmatter, extract_field}
+
+// ── Import ──────────────────────────────────────────────────
+
+fn cmd_import(from: &str, dir: Option<&Path>, dry_run: bool, config: &Config) -> Result<()> {
+    match from {
+        "granola" => import_granola(dir, dry_run, config),
+        other => anyhow::bail!("Unknown import source: {}. Supported: granola", other),
+    }
+}
+
+fn import_granola(dir: Option<&Path>, dry_run: bool, config: &Config) -> Result<()> {
+    let source_dir = dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/tmp"))
+                .join(".granola-archivist")
+                .join("output")
+        });
+
+    if !source_dir.exists() {
+        anyhow::bail!(
+            "Granola export directory not found: {}\n\
+             Export your Granola meetings first, or specify a directory with --dir",
+            source_dir.display()
+        );
+    }
+
+    let output_dir = &config.output_dir;
+    std::fs::create_dir_all(output_dir)?;
+
+    let mut imported = 0;
+    let mut skipped = 0;
+
+    for entry in std::fs::read_dir(&source_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&path)?;
+
+        // Parse Granola format
+        let title = content
+            .lines()
+            .find(|l| l.starts_with("# Meeting:"))
+            .map(|l| l.trim_start_matches("# Meeting:").trim().to_string())
+            .unwrap_or_else(|| "Untitled Granola Meeting".into());
+
+        let date = content
+            .lines()
+            .find(|l| l.starts_with("Date:"))
+            .and_then(|l| {
+                let raw = l.trim_start_matches("Date:").trim();
+                // Parse "2026-01-19 @ 20:27" format
+                let cleaned = raw.replace(" @ ", "T").replace(" @", "T");
+                if cleaned.len() >= 10 {
+                    Some(cleaned)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "2026-01-01T00:00:00".into());
+
+        let attendees_line = content
+            .lines()
+            .find(|l| l.starts_with("Attendees:"))
+            .map(|l| l.trim_start_matches("Attendees:").trim().to_string())
+            .unwrap_or_default();
+
+        // Extract notes and transcript sections
+        let notes_section = extract_section(&content, "## Your Notes");
+        let transcript_section = extract_section(&content, "## Transcript");
+
+        // Build the output filename
+        let date_prefix = &date[..10.min(date.len())];
+        let slug: String = title
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join("-");
+        let filename = format!("{}-{}.md", date_prefix, slug);
+        let output_path = output_dir.join(&filename);
+
+        if output_path.exists() {
+            skipped += 1;
+            if dry_run {
+                eprintln!("  SKIP (exists): {}", filename);
+            }
+            continue;
+        }
+
+        // Build Minutes-format markdown
+        let mut output = String::new();
+        output.push_str("---\n");
+        output.push_str(&format!("title: {}\n", title));
+        output.push_str("type: meeting\n");
+        output.push_str(&format!("date: {}\n", date));
+        output.push_str("source: granola-import\n");
+        if !attendees_line.is_empty() && attendees_line != "None" {
+            output.push_str(&format!("attendees_raw: {}\n", attendees_line));
+        }
+        output.push_str("---\n\n");
+
+        if let Some(notes) = &notes_section {
+            output.push_str("## Notes\n\n");
+            output.push_str(notes);
+            output.push_str("\n\n");
+        }
+
+        if let Some(transcript) = &transcript_section {
+            output.push_str("## Transcript\n\n");
+            output.push_str(transcript);
+            output.push('\n');
+        }
+
+        if dry_run {
+            eprintln!("  WOULD IMPORT: {} -> {}", path.display(), filename);
+        } else {
+            std::fs::write(&output_path, &output)?;
+            // Set permissions to 0600
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&output_path, std::fs::Permissions::from_mode(0o600))?;
+            }
+            eprintln!("  Imported: {}", filename);
+        }
+
+        imported += 1;
+    }
+
+    let action = if dry_run { "Would import" } else { "Imported" };
+    let json = serde_json::json!({
+        "imported": imported,
+        "skipped": skipped,
+        "source": "granola",
+        "output_dir": output_dir.display().to_string(),
+        "dry_run": dry_run,
+    });
+    println!("{}", serde_json::to_string_pretty(&json)?);
+    eprintln!("\n{} {} meetings ({} skipped, already exist)", action, imported, skipped);
+
+    Ok(())
+}
+
+fn extract_section(content: &str, heading: &str) -> Option<String> {
+    let mut in_section = false;
+    let mut section = String::new();
+
+    for line in content.lines() {
+        if line.starts_with(heading) {
+            in_section = true;
+            continue;
+        }
+        if in_section && line.starts_with("## ") {
+            break; // Next section
+        }
+        if in_section {
+            section.push_str(line);
+            section.push('\n');
+        }
+    }
+
+    let trimmed = section.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}

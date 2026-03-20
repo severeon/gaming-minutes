@@ -1844,7 +1844,7 @@ pub fn cmd_get_settings() -> serde_json::Value {
 
     // Check which whisper model is downloaded
     let model_path = config.transcription.model_path.clone();
-    let downloaded_models: Vec<String> = ["tiny", "small", "medium", "large-v3"]
+    let downloaded_models: Vec<String> = ["tiny", "base", "small", "medium", "large-v3"]
         .iter()
         .filter(|m| {
             let pattern = format!("ggml-{}", m);

@@ -14,6 +14,11 @@
     }
   },
   "bundle": {
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/app-icon.png"
+    ],
     "macOS": {
       "entitlements": "entitlements.plist",
       "infoPlist": "Info.plist"

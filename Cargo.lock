@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "minutes-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2410,7 +2410,7 @@ dependencies = [
 
 [[package]]
 name = "minutes-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2432,11 +2432,12 @@ dependencies = [
  "ureq",
  "walkdir",
  "whisper-rs",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "minutes-reader"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "schemars 1.2.1",

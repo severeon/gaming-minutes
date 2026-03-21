@@ -196,6 +196,9 @@ pub fn create() -> Result<(), PidError> {
     use fs2::FileExt;
     use std::io::Write;
 
+    // Clean up stale sentinel from a previous crashed recording
+    check_and_clear_sentinel();
+
     let path = pid_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -264,8 +267,72 @@ fn cleanup_stale() -> Result<(), PidError> {
 
 /// Check if a process with the given PID is alive.
 pub fn is_process_alive(pid: u32) -> bool {
-    // kill(pid, 0) checks if the process exists without sending a signal
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    #[cfg(unix)]
+    {
+        // kill(pid, 0) checks if the process exists without sending a signal
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+        use windows_sys::Win32::Foundation::CloseHandle;
+        unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+            if handle == 0 {
+                false
+            } else {
+                CloseHandle(handle);
+                true
+            }
+        }
+    }
+}
+
+/// Path to the sentinel file used for cross-platform stop signaling.
+/// `minutes stop` writes this file; the recording process polls for it.
+pub fn stop_sentinel_path() -> PathBuf {
+    Config::minutes_dir().join("recording.stop")
+}
+
+/// Write the sentinel file to signal the recording process to stop.
+pub fn write_stop_sentinel() -> std::io::Result<()> {
+    let path = stop_sentinel_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, "stop")
+}
+
+/// Check if the stop sentinel exists and remove it.
+/// Returns true if it was present (stop was requested).
+pub fn check_and_clear_sentinel() -> bool {
+    let path = stop_sentinel_path();
+    if path.exists() {
+        fs::remove_file(&path).ok();
+        true
+    } else {
+        false
+    }
+}
+
+/// Spawn a background thread that polls for the sentinel file and sets the stop flag.
+/// Returns a JoinHandle that can be used to wait for cleanup.
+pub fn spawn_sentinel_watcher(stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        loop {
+            if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                // Already stopping (e.g., via SIGTERM on Unix) — clean up sentinel if present
+                check_and_clear_sentinel();
+                break;
+            }
+            if check_and_clear_sentinel() {
+                tracing::info!("stop sentinel detected — stopping recording");
+                stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    })
 }
 
 /// Recording status, returned by `minutes status`.
@@ -352,5 +419,41 @@ mod tests {
         let metadata = read_recording_metadata().unwrap();
         assert_eq!(metadata.mode, CaptureMode::QuickThought);
         clear_recording_metadata().unwrap();
+    }
+
+    #[test]
+    fn sentinel_lifecycle() {
+        // Ensure clean state
+        let _ = std::fs::remove_file(stop_sentinel_path());
+        assert!(!stop_sentinel_path().exists());
+
+        // Write sentinel
+        write_stop_sentinel().unwrap();
+        assert!(stop_sentinel_path().exists());
+
+        // Check and clear returns true, removes file
+        assert!(check_and_clear_sentinel());
+        assert!(!stop_sentinel_path().exists());
+
+        // Second check returns false
+        assert!(!check_and_clear_sentinel());
+    }
+
+    #[test]
+    fn sentinel_write_and_clear() {
+        // Write a sentinel and verify check_and_clear removes it
+        write_stop_sentinel().unwrap();
+        assert!(stop_sentinel_path().exists());
+        assert!(check_and_clear_sentinel());
+        assert!(!stop_sentinel_path().exists());
+        // Second call returns false — already cleared
+        assert!(!check_and_clear_sentinel());
+    }
+
+    #[test]
+    fn check_and_clear_sentinel_returns_false_when_absent() {
+        // Ensure no sentinel exists
+        let _ = std::fs::remove_file(stop_sentinel_path());
+        assert!(!check_and_clear_sentinel());
     }
 }

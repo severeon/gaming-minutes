@@ -2,6 +2,7 @@ use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
@@ -85,6 +86,7 @@ fn append_event_inner(envelope: &EventEnvelope) -> std::io::Result<()> {
         .open(&path)?;
 
     // Set 0600 on newly created files (sensitive meeting data)
+    #[cfg(unix)]
     if creating {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
     }

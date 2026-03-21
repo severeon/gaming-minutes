@@ -11,13 +11,25 @@ env:
 
 jobs:
   test:
-    name: Test (no whisper)
-    runs-on: macos-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install ALSA dev headers (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: Set CXXFLAGS for whisper.cpp (macOS)
+        if: runner.os == 'macOS'
+        run: echo "CXXFLAGS=-I$(xcrun --show-sdk-path)/usr/include/c++/v1" >> $GITHUB_ENV
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -28,16 +40,21 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build
-        run: cargo build --no-default-features
+      - name: Build (no whisper)
+        run: cargo build -p minutes-core --no-default-features
+
+      - name: Build CLI (no whisper)
+        run: cargo build -p minutes-cli --no-default-features
 
       - name: Test (unit + integration, no whisper)
         run: cargo test -p minutes-core --no-default-features
 
-      - name: Clippy
+      - name: Clippy (macOS only — full workspace)
+        if: runner.os == 'macOS'
         run: cargo clippy --all --no-default-features -- -D warnings
 
-      - name: Format check
+      - name: Format check (macOS only)
+        if: runner.os == 'macOS'
         run: cargo fmt --all -- --check
 
   mcp:

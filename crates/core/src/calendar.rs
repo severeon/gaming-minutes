@@ -22,21 +22,35 @@ pub struct CalendarEvent {
 
 /// Query upcoming calendar events within the next `lookahead_minutes`.
 /// Returns events sorted by start time (all-day events excluded).
+/// On non-macOS platforms, returns an empty list (calendar integration uses AppleScript/EventKit).
 pub fn upcoming_events(lookahead_minutes: u32) -> Vec<CalendarEvent> {
-    // Try compiled EventKit helper first
-    if let Some(events) = query_via_eventkit(lookahead_minutes) {
-        if !events.is_empty() {
-            return events;
-        }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = lookahead_minutes;
+        return Vec::new();
     }
-    // AppleScript: fetch today's events, filter by time range
-    query_via_applescript(lookahead_minutes)
+    #[cfg(target_os = "macos")]
+    {
+        // Try compiled EventKit helper first
+        if let Some(events) = query_via_eventkit(lookahead_minutes) {
+            if !events.is_empty() {
+                return events;
+            }
+        }
+        // AppleScript: fetch today's events, filter by time range
+        query_via_applescript(lookahead_minutes)
+    }
 }
 
 /// Find calendar events that overlap a given time window.
 /// Used to match a recording to its calendar event after the fact.
-/// `start_time` and `end_time` are ISO 8601 strings or "HH:MM" format.
+/// On non-macOS platforms, returns an empty list.
 pub fn events_overlapping_now() -> Vec<CalendarEvent> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        return Vec::new();
+    }
+    #[cfg(target_os = "macos")]
     // Query events in a 2-hour window centered on now (covers most meetings)
     // The AppleScript returns events starting within the window;
     // we also look backward to catch events that started before recording began.

@@ -4,6 +4,7 @@ use chrono::{DateTime, Local};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -286,10 +287,13 @@ fn resolve_collision(dir: &Path, filename: &str) -> PathBuf {
     dir.join(format!("{}-{}.md", stem, ts))
 }
 
-/// Set file permissions to the given mode.
-fn set_permissions(path: &Path, mode: u32) -> Result<(), MarkdownError> {
-    let perms = fs::Permissions::from_mode(mode);
-    fs::set_permissions(path, perms)?;
+/// Set file permissions to the given mode (Unix only; no-op on Windows).
+fn set_permissions(path: &Path, _mode: u32) -> Result<(), MarkdownError> {
+    #[cfg(unix)]
+    {
+        let perms = fs::Permissions::from_mode(_mode);
+        fs::set_permissions(path, perms)?;
+    }
     Ok(())
 }
 

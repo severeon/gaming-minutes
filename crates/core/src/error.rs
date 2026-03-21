@@ -10,7 +10,16 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CaptureError {
+    #[cfg(target_os = "macos")]
     #[error("audio device not found — is BlackHole installed? Run: brew install blackhole-2ch")]
+    DeviceNotFound,
+
+    #[cfg(target_os = "windows")]
+    #[error("audio device not found — is VB-CABLE installed? See https://vb-audio.com/Cable/")]
+    DeviceNotFound,
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[error("audio device not found — check your ALSA/PulseAudio configuration")]
     DeviceNotFound,
 
     #[error("already recording (PID: {0})")]

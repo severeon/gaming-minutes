@@ -142,13 +142,19 @@ const __dirname = dirname(__filename);
 // ── Find the minutes binary ─────────────────────────────────
 
 function findMinutesBinary(): string {
+  const isWindows = process.platform === "win32";
+  const ext = isWindows ? ".exe" : "";
   const candidates = [
-    join(__dirname, "..", "..", "..", "target", "release", "minutes"),
-    join(__dirname, "..", "..", "..", "target", "debug", "minutes"),
-    join(homedir(), ".cargo", "bin", "minutes"),
-    join(homedir(), ".local", "bin", "minutes"),
-    "/opt/homebrew/bin/minutes",
-    "/usr/local/bin/minutes",
+    join(__dirname, "..", "..", "..", "target", "release", `minutes${ext}`),
+    join(__dirname, "..", "..", "..", "target", "debug", `minutes${ext}`),
+    join(homedir(), ".cargo", "bin", `minutes${ext}`),
+    ...(isWindows
+      ? []
+      : [
+          join(homedir(), ".local", "bin", "minutes"),
+          "/opt/homebrew/bin/minutes",
+          "/usr/local/bin/minutes",
+        ]),
   ];
 
   for (const candidate of candidates) {

@@ -27,6 +27,15 @@
 **Effort:** L (human: ~2 weeks / CC: ~2 hours)
 **Depends on:** Recall panel + usage data on whether users need per-meeting threads.
 
+## P3: Publish to crates.io
+**What:** Publish `minutes` to crates.io so users can install via `cargo install minutes`.
+**Why:** The MCPB extension bundles only the Node.js MCP server, not the Rust binary. Users on any platform need to install the binary separately. `cargo install minutes` is the simplest universal method.
+**Pros:** Standard Rust distribution. Shows up in crates.io search. Enables version pinning.
+**Cons:** Need to resolve crate name availability. Requires maintaining a publish workflow.
+**Context:** Deferred from windows-support eng review (2026-03-21). Currently users must use `cargo install --git` or download release binaries.
+**Effort:** S (human: ~2 hours / CC: ~15 min)
+**Depends on:** Windows support landing (cross-platform CI must pass first).
+
 ## P3: Create DESIGN.md
 **What:** Formalize the implicit design system (CSS variables, component patterns, typography, spacing, color usage) into a DESIGN.md file.
 **Why:** The codebase has a strong implicit design language in the CSS but no documentation. As the UI grows (Recall panel, future features), having a reference prevents drift.

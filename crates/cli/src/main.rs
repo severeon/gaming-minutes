@@ -315,7 +315,18 @@ fn main() -> Result<()> {
         Commands::Devices => cmd_devices(),
         Commands::Setup { model, list } => cmd_setup(&model, list),
         Commands::Qmd { action, collection } => cmd_qmd(&action, &collection, &config),
-        Commands::Service { action } => cmd_service(&action),
+        Commands::Service { action } => {
+            #[cfg(target_os = "macos")]
+            { cmd_service(&action) }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = action;
+                eprintln!("The service command uses macOS launchd and is only available on macOS.");
+                eprintln!("On Linux, use systemd or cron to run `minutes watch`.");
+                eprintln!("On Windows, use Task Scheduler to run `minutes watch`.");
+                Ok(())
+            }
+        }
         Commands::Logs { errors, lines } => cmd_logs(errors, lines),
         Commands::Schema => cmd_schema(),
         Commands::Get { slug } => cmd_get(&slug, &config),
@@ -486,11 +497,18 @@ fn cmd_stop(_config: &Config) -> Result<()> {
                 .unwrap_or(CaptureMode::Meeting);
             eprintln!("Stopping recording (PID {})...", pid);
 
-            // Send SIGTERM to the recording process
-            let rc = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-            if rc != 0 {
-                let err = std::io::Error::last_os_error();
-                anyhow::bail!("could not signal recording process (PID {}): {}", pid, err);
+            // Write sentinel file (cross-platform stop mechanism)
+            minutes_core::pid::write_stop_sentinel()
+                .map_err(|e| anyhow::anyhow!("failed to write stop sentinel: {}", e))?;
+
+            // On Unix, also send SIGTERM for instant stop
+            #[cfg(unix)]
+            {
+                let rc = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+                if rc != 0 {
+                    let err = std::io::Error::last_os_error();
+                    tracing::warn!("SIGTERM failed (PID {}): {} — sentinel file will stop recording", pid, err);
+                }
             }
 
             // Poll for PID file removal with progress feedback
@@ -1172,6 +1190,7 @@ fn cmd_qmd(action: &str, collection: &str, config: &Config) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn cmd_service(action: &str) -> Result<()> {
     let plist_name = "dev.getminutes.watcher";
     let plist_dest = dirs::home_dir()

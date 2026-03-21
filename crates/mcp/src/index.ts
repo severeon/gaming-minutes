@@ -11,6 +11,12 @@
  *   - search_meetings: Search meeting transcripts
  *   - get_meeting: Get full transcript of a specific meeting
  *   - process_audio: Process an audio file through the pipeline
+ *   - add_note: Add a timestamped note to a recording or meeting
+ *   - consistency_report: Flag conflicting decisions and stale commitments
+ *   - get_person_profile: Build a profile for a person across meetings
+ *   - research_topic: Cross-meeting topic research
+ *   - qmd_collection_status: Check QMD collection registration
+ *   - register_qmd_collection: Register Minutes output as QMD collection
  *
  * All tools use execFile (not exec) to shell out to the `minutes` CLI binary.
  * No shell interpolation — safe from injection.
@@ -35,6 +41,99 @@ import { homedir } from "os";
 const UI_RESOURCE_URI = "ui://minutes/dashboard";
 
 const execFileAsync = promisify(execFile);
+
+// ── QMD semantic search (optional — falls back to CLI) ──────
+
+let qmdAvailable: boolean | null = null;
+
+async function runQmd(
+  args: string[],
+  timeoutMs: number = 15000
+): Promise<{ stdout: string; stderr: string } | null> {
+  try {
+    const { stdout, stderr } = await execFileAsync("qmd", args, {
+      timeout: timeoutMs,
+      env: { ...process.env },
+    });
+    return { stdout: stdout.trim(), stderr: stderr.trim() };
+  } catch {
+    return null;
+  }
+}
+
+async function isQmdAvailable(): Promise<boolean> {
+  if (qmdAvailable !== null) return qmdAvailable;
+  const result = await runQmd(["collection", "show", "minutes"]);
+  qmdAvailable = result !== null && !result.stderr.includes("not found") && !result.stderr.includes("No collection");
+  if (qmdAvailable) {
+    console.error("[Minutes] QMD available — semantic search enabled for minutes collection");
+  }
+  return qmdAvailable;
+}
+
+async function enrichWithFrontmatter(qmdResults: any[]): Promise<any[]> {
+  return Promise.all(
+    qmdResults.map(async (r: any) => {
+      try {
+        const head = (await readFile(r.source_path || r.path, "utf-8")).slice(0, 600);
+        const title = head.match(/^title:\s*(.+)$/m)?.[1]?.trim() || "";
+        const date = head.match(/^date:\s*(.+)$/m)?.[1]?.trim() || "";
+        const contentType = head.match(/^type:\s*(.+)$/m)?.[1]?.trim() || "meeting";
+        return {
+          date,
+          title,
+          content_type: contentType,
+          path: r.source_path || r.path,
+          snippet: r.snippet || "",
+        };
+      } catch {
+        return {
+          date: "",
+          title: "",
+          content_type: "meeting",
+          path: r.source_path || r.path,
+          snippet: r.snippet || "",
+        };
+      }
+    })
+  );
+}
+
+async function searchViaQmd(
+  query: string,
+  limit: number,
+  contentType?: string
+): Promise<any[] | null> {
+  if (!(await isQmdAvailable())) return null;
+
+  const args = ["search", query, "-c", "minutes", "-n", String(limit), "--json"];
+  const result = await runQmd(args);
+  if (!result) return null;
+
+  try {
+    const parsed = JSON.parse(result.stdout);
+    const results = Array.isArray(parsed) ? parsed : parsed.results || [];
+    if (results.length === 0) return null;
+
+    const enriched = await enrichWithFrontmatter(results);
+
+    // Apply content type filter if specified
+    if (contentType) {
+      const filtered = enriched.filter((r: any) => r.content_type === contentType);
+      return filtered.length > 0 ? filtered : null;
+    }
+
+    return enriched;
+  } catch {
+    return null;
+  }
+}
+
+async function triggerQmdIndex(): Promise<void> {
+  if (!(await isQmdAvailable())) return;
+  // Fire-and-forget — don't block the response
+  execFileAsync("qmd", ["update", "-c", "minutes"]).catch(() => {});
+}
 
 // ESM-compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -157,8 +256,12 @@ function validatePathInDirectories(
 
 const server = new McpServer({
   name: "minutes",
-  version: "0.1.0",
+  version: "0.3.0",
 });
+
+// Configurable directories — override via env vars in Claude Desktop extension settings
+const MEETINGS_DIR = process.env.MEETINGS_DIR || join(homedir(), "meetings");
+const MINUTES_HOME = process.env.MINUTES_HOME || join(homedir(), ".minutes");
 
 // ── UI Resource: MCP App dashboard ──────────────────────────
 
@@ -193,6 +296,7 @@ server.tool(
       .default("meeting")
       .describe("Live capture mode"),
   },
+  { title: "Start Recording", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   async ({ title, mode }) => {
     const { stdout: statusOut } = await runMinutes(["status"]);
     const status = parseJsonOutput(statusOut);
@@ -244,6 +348,7 @@ server.tool(
   "stop_recording",
   "Stop the current recording and process it (transcribe, diarize, summarize).",
   {},
+  { title: "Stop Recording", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   async () => {
     try {
       const { stdout, stderr } = await runMinutes(["stop"], 180000);
@@ -252,6 +357,9 @@ server.tool(
       const message = result.file
         ? `Recording saved: ${result.file}\nTitle: ${result.title}\nWords: ${result.words}`
         : stderr || "Recording stopped.";
+
+      // Trigger QMD re-index so new meeting is immediately searchable
+      if (result.file) triggerQmdIndex();
 
       return { content: [{ type: "text" as const, text: message }] };
     } catch (error: any) {
@@ -268,6 +376,7 @@ server.tool(
   "get_status",
   "Check if a recording is currently in progress.",
   {},
+  { title: "Recording Status", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   async () => {
     const { stdout } = await runMinutes(["status"]);
     const status = parseJsonOutput(stdout);
@@ -294,6 +403,7 @@ registerAppTool(
       limit: z.number().optional().default(10).describe("Maximum results"),
       type: z.enum(["meeting", "memo"]).optional().describe("Filter by type"),
     },
+    annotations: { title: "List Meetings", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { ui: { resourceUri: UI_RESOURCE_URI } },
   },
   async ({ limit, type: contentType }) => {
@@ -356,20 +466,37 @@ registerAppTool(
         .default(false)
         .describe("Return structured intent records instead of transcript snippets"),
     },
+    annotations: { title: "Search Meetings", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { ui: { resourceUri: UI_RESOURCE_URI } },
   },
   async ({ query, type: contentType, since, limit, intent_kind, owner, intents_only }) => {
-    const args = ["search", query, "--limit", String(limit)];
-    if (contentType) args.push("-t", contentType);
-    if (since) args.push("--since", since);
-    if (intent_kind) args.push("--intent-kind", intent_kind);
-    if (owner) args.push("--owner", owner);
-    if (intents_only) args.push("--intents-only");
+    // Intent/metadata queries always use CLI (QMD doesn't index YAML frontmatter fields)
+    const useCliOnly = intents_only || intent_kind || owner || since;
 
-    const { stdout, stderr } = await runMinutes(args);
-    const results = parseJsonOutput(stdout);
+    // Try QMD semantic search for text queries
+    let results: any[] | null = null;
+    let usedQmd = false;
 
-    if (Array.isArray(results) && results.length === 0) {
+    if (!useCliOnly) {
+      results = await searchViaQmd(query, limit, contentType);
+      if (results) usedQmd = true;
+    }
+
+    // Fall back to CLI regex search
+    if (!results) {
+      const args = ["search", query, "--limit", String(limit)];
+      if (contentType) args.push("-t", contentType);
+      if (since) args.push("--since", since);
+      if (intent_kind) args.push("--intent-kind", intent_kind);
+      if (owner) args.push("--owner", owner);
+      if (intents_only) args.push("--intents-only");
+
+      const { stdout, stderr } = await runMinutes(args);
+      const parsed = parseJsonOutput(stdout);
+      results = Array.isArray(parsed) ? parsed : [];
+    }
+
+    if (results.length === 0) {
       return {
         content: [{ type: "text" as const, text: `No results found for "${query}".` }],
         structuredContent: { meetings: [], actions: [], view: "dashboard" },
@@ -377,32 +504,28 @@ registerAppTool(
       };
     }
 
-    const text = Array.isArray(results)
-      ? intents_only
-        ? results
-            .map(
-              (r: any) =>
-                `${r.date} — ${r.title} [${r.content_type}]\n  ${r.kind}: ${r.what}${r.who ? ` (@${r.who})` : ""}${r.by_date ? ` by ${r.by_date}` : ""}\n  ${r.path}`
-            )
-            .join("\n\n")
-        : results
-            .map(
-              (r: any) =>
-                `${r.date} — ${r.title} [${r.content_type}]\n  ${r.snippet}\n  ${r.path}`
-            )
-            .join("\n\n")
-      : (stderr || stdout);
+    const text = intents_only
+      ? results
+          .map(
+            (r: any) =>
+              `${r.date} — ${r.title} [${r.content_type}]\n  ${r.kind}: ${r.what}${r.who ? ` (@${r.who})` : ""}${r.by_date ? ` by ${r.by_date}` : ""}\n  ${r.path}`
+          )
+          .join("\n\n")
+      : results
+          .map(
+            (r: any) =>
+              `${r.date} — ${r.title} [${r.content_type}]\n  ${r.snippet}\n  ${r.path}`
+          )
+          .join("\n\n");
 
     // Map search results to meeting-like objects for the dashboard view
-    const meetings = Array.isArray(results)
-      ? results.map((r: any) => ({
+    const meetings = results.map((r: any) => ({
           date: r.date,
           title: r.title,
           content_type: r.content_type,
           path: r.path,
           snippet: r.snippet || (intents_only ? `${r.kind}: ${r.what}` : undefined),
-        }))
-      : [];
+        }));
 
     return {
       content: [{ type: "text" as const, text }],
@@ -427,6 +550,7 @@ registerAppTool(
         .default(7)
         .describe("Flag commitments this many days old or older"),
     },
+    annotations: { title: "Consistency Report", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { ui: { resourceUri: UI_RESOURCE_URI } },
   },
   async ({ owner, stale_after_days }) => {
@@ -497,6 +621,7 @@ registerAppTool(
     inputSchema: {
       name: z.string().describe("Person / attendee name to profile"),
     },
+    annotations: { title: "Person Profile", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { ui: { resourceUri: UI_RESOURCE_URI } },
   },
   async ({ name }) => {
@@ -572,6 +697,7 @@ server.tool(
     since: z.string().optional().describe("Only results after this date (ISO)"),
     attendee: z.string().optional().describe("Filter by attendee / person"),
   },
+  { title: "Research Topic", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   async ({ query, type: contentType, since, attendee }) => {
     const args = ["research", query];
     if (contentType) args.push("-t", contentType);
@@ -661,11 +787,12 @@ registerAppTool(
     inputSchema: {
       path: z.string().describe("Path to the meeting markdown file"),
     },
+    annotations: { title: "View Meeting", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { ui: { resourceUri: UI_RESOURCE_URI } },
   },
   async ({ path: filePath }) => {
     try {
-      const resolved = validatePathInDirectory(filePath, join(homedir(), "meetings"), [".md"]);
+      const resolved = validatePathInDirectory(filePath, MEETINGS_DIR, [".md"]);
       const content = await readFile(resolved, "utf-8");
       return {
         content: [{ type: "text" as const, text: content }],
@@ -690,10 +817,11 @@ server.tool(
     type: z.enum(["meeting", "memo"]).optional().default("memo").describe("Content type"),
     title: z.string().optional().describe("Optional title"),
   },
+  { title: "Process Audio", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   async ({ file_path, type: contentType, title }) => {
     const allowedDirs = [
-      join(homedir(), ".minutes", "inbox"),
-      join(homedir(), "meetings"),
+      join(MINUTES_HOME, "inbox"),
+      MEETINGS_DIR,
       join(homedir(), "Downloads"),
     ];
     const audioExts = [".wav", ".m4a", ".mp3", ".ogg", ".webm"];
@@ -735,13 +863,14 @@ server.tool(
       .optional()
       .describe("Path to an existing meeting file to annotate (for post-meeting notes)"),
   },
+  { title: "Add Note", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   async ({ text, meeting_path }) => {
     try {
       const args = ["note", text];
       if (meeting_path) {
         const resolved = validatePathInDirectory(
           meeting_path,
-          join(homedir(), "meetings"),
+          MEETINGS_DIR,
           [".md"]
         );
         args.push("--meeting", resolved);
@@ -771,6 +900,7 @@ server.tool(
       .default("minutes")
       .describe("QMD collection name to check"),
   },
+  { title: "QMD Status", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   async ({ collection }) => {
     const { stdout, stderr } = await runMinutes([
       "qmd",
@@ -836,6 +966,7 @@ server.tool(
       .default("minutes")
       .describe("QMD collection name to register"),
   },
+  { title: "Register QMD", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   async ({ collection }) => {
     const { stdout, stderr } = await runMinutes([
       "qmd",

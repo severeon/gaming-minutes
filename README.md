@@ -152,6 +152,24 @@ minutes process ~/Downloads/voice-memo.m4a        # Any audio format
 minutes watch                                     # Auto-process new files in inbox
 ```
 
+### iPhone → Mac voice memo pipeline
+
+Record a voice memo on your phone, have it transcribed on your Mac automatically:
+
+1. **Set up iCloud inbox** (one-time):
+   ```bash
+   mkdir -p ~/Library/Mobile\ Documents/com~apple~CloudDocs/minutes-inbox
+   ```
+2. **Add watch path** in `~/.config/minutes/config.toml`:
+   ```toml
+   [watch]
+   paths = ["~/.minutes/inbox", "~/Library/Mobile Documents/com~apple~CloudDocs/minutes-inbox"]
+   ```
+3. **On iPhone**: Voice Memos → Share → Save to Files → iCloud Drive → `minutes-inbox`
+4. **On Mac**: `minutes watch` picks it up, transcribes, saves to `~/meetings/memos/`
+
+Or use AirDrop: send voice memo to Mac → `minutes process ~/Downloads/recording.m4a`
+
 ### Search everything
 ```bash
 minutes search "pricing"                          # Full-text search
@@ -159,6 +177,13 @@ minutes search "onboarding" -t memo               # Filter by type
 minutes actions                                   # Open action items across all meetings
 minutes actions --assignee sarah                   # Filter by person
 minutes list                                      # Recent recordings
+```
+
+### Cross-meeting intelligence
+```bash
+minutes research "pricing strategy"               # Search across all meetings
+minutes person "Alex"                              # Build a profile from meeting history
+minutes consistency                                # Flag contradicting decisions + stale commitments
 ```
 
 ### Post-meeting annotations

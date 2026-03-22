@@ -10,7 +10,7 @@ use std::process::Command;
 // Also tries a compiled EventKit helper if available.
 // ──────────────────────────────────────────────────────────────
 
-/// A calendar event with title, start time, and attendees.
+/// A calendar event with title, start time, attendees, and optional meeting URL.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CalendarEvent {
     pub title: String,
@@ -18,6 +18,53 @@ pub struct CalendarEvent {
     pub minutes_until: i64,
     #[serde(default)]
     pub attendees: Vec<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Extract a meeting URL (Zoom, Google Meet, Teams, Webex) from text.
+/// Searches for common video conferencing URL patterns and returns the first match.
+pub fn extract_meeting_url(text: &str) -> Option<String> {
+    let patterns = [
+        "https://zoom.us/j/",
+        "https://us02web.zoom.us/j/",
+        "https://us04web.zoom.us/j/",
+        "https://us05web.zoom.us/j/",
+        "https://us06web.zoom.us/j/",
+        "https://meet.google.com/",
+        "https://teams.microsoft.com/l/meetup-join/",
+        "https://teams.live.com/meet/",
+        "https://webex.com/meet/",
+        "https://facetime.apple.com/",
+    ];
+
+    for pattern in &patterns {
+        if let Some(start) = text.find(pattern) {
+            let url_text = &text[start..];
+            let end = url_text
+                .find(|c: char| c.is_whitespace() || c == '>' || c == '"' || c == ')')
+                .unwrap_or(url_text.len());
+            let url = &url_text[..end];
+            if url.len() > pattern.len() {
+                return Some(url.to_string());
+            }
+        }
+    }
+
+    // Fallback: look for any https:// URL containing common meeting keywords
+    for keyword in &["zoom.us", "meet.google", "teams.microsoft", "webex.com", "facetime.apple"] {
+        if let Some(https_pos) = text.find("https://") {
+            let url_text = &text[https_pos..];
+            if url_text.contains(keyword) {
+                let end = url_text
+                    .find(|c: char| c.is_whitespace() || c == '>' || c == '"' || c == ')')
+                    .unwrap_or(url_text.len());
+                return Some(url_text[..end].to_string());
+            }
+        }
+    }
+
+    None
 }
 
 /// Query upcoming calendar events within the next `lookahead_minutes`.
@@ -90,7 +137,12 @@ tell application "Calendar"
                             set attendeeNames to attendeeNames & (name of anAttendee)
                         end repeat
                     end try
-                    set output to output & t & unitSep & (s as string) & unitSep & mins & unitSep & attendeeNames & linefeed
+                    set loc to ""
+                    try
+                        set loc to location of evt
+                        if loc is missing value then set loc to ""
+                    end try
+                    set output to output & t & unitSep & (s as string) & unitSep & mins & unitSep & attendeeNames & unitSep & loc & linefeed
                 end if
             end repeat
         end try
@@ -111,7 +163,7 @@ return output"#;
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(4, unit_sep).collect();
+            let parts: Vec<&str> = line.splitn(5, unit_sep).collect();
             if parts.len() >= 3 {
                 let attendees = if parts.len() >= 4 && !parts[3].trim().is_empty() {
                     parts[3]
@@ -122,11 +174,15 @@ return output"#;
                 } else {
                     Vec::new()
                 };
+                let url = parts
+                    .get(4)
+                    .and_then(|loc| extract_meeting_url(loc.trim()));
                 Some(CalendarEvent {
                     title: parts[0].trim().to_string(),
                     start: parts[1].trim().to_string(),
                     minutes_until: parts[2].trim().parse().unwrap_or(0),
                     attendees,
+                    url,
                 })
             } else {
                 None
@@ -208,7 +264,12 @@ tell application "Calendar"
                 if s >= now and s <= horizon then
                     set t to summary of evt
                     set mins to ((s - now) / 60) as integer
-                    set output to output & t & (ASCII character 31) & (s as string) & (ASCII character 31) & mins & linefeed
+                    set loc to ""
+                    try
+                        set loc to location of evt
+                        if loc is missing value then set loc to ""
+                    end try
+                    set output to output & t & (ASCII character 31) & (s as string) & (ASCII character 31) & mins & (ASCII character 31) & loc & linefeed
                 end if
             end repeat
         end try
@@ -238,13 +299,17 @@ return output"#,
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(3, sep).collect();
+            let parts: Vec<&str> = line.splitn(4, sep).collect();
             if parts.len() >= 3 {
+                let url = parts
+                    .get(3)
+                    .and_then(|loc| extract_meeting_url(loc.trim()));
                 Some(CalendarEvent {
                     title: parts[0].trim().to_string(),
                     start: parts[1].trim().to_string(),
                     minutes_until: parts[2].trim().parse().unwrap_or(0),
                     attendees: Vec::new(),
+                    url,
                 })
             } else {
                 None
@@ -256,4 +321,61 @@ return output"#,
     events.sort_by_key(|e| (e.minutes_until, e.title.clone()));
     events.dedup_by(|a, b| a.title == b.title && a.minutes_until == b.minutes_until);
     events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_zoom_url() {
+        let text = "https://zoom.us/j/1234567890?pwd=abc123";
+        assert_eq!(
+            extract_meeting_url(text),
+            Some("https://zoom.us/j/1234567890?pwd=abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_google_meet_url() {
+        let text = "Join: https://meet.google.com/abc-defg-hij";
+        assert_eq!(
+            extract_meeting_url(text),
+            Some("https://meet.google.com/abc-defg-hij".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_teams_url() {
+        let text = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc";
+        assert_eq!(
+            extract_meeting_url(text),
+            Some("https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_no_url() {
+        assert_eq!(extract_meeting_url("Conference Room B"), None);
+        assert_eq!(extract_meeting_url(""), None);
+        assert_eq!(extract_meeting_url("https://docs.google.com/doc/123"), None);
+    }
+
+    #[test]
+    fn extract_url_from_mixed_text() {
+        let text = "Location: Building 4, Room 201\nhttps://zoom.us/j/999 (backup link)";
+        assert_eq!(
+            extract_meeting_url(text),
+            Some("https://zoom.us/j/999".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_zoom_subdomain_url() {
+        let text = "https://us02web.zoom.us/j/8765432?pwd=xyz";
+        assert_eq!(
+            extract_meeting_url(text),
+            Some("https://us02web.zoom.us/j/8765432?pwd=xyz".to_string())
+        );
+    }
 }

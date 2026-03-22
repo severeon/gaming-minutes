@@ -107,7 +107,7 @@ pub fn update_tray_state(app: &tauri::AppHandle, is_recording: bool) {
 const MAX_CALENDAR_ITEMS: usize = 3;
 const CALENDAR_REFRESH_SECS: u64 = 60;
 const CALENDAR_LOOKAHEAD_MINUTES: u32 = 240; // 4 hours
-const MEETING_NOTIFY_MINUTES: i64 = 2; // Notify this many minutes before
+const MEETING_NOTIFY_MINUTES: i64 = 3; // Show prompt this many minutes before
 
 struct CalendarMenuState {
     items: Vec<MenuItem<tauri::Wry>>,
@@ -132,6 +132,75 @@ fn format_calendar_label(event: &minutes_core::calendar::CalendarEvent) -> Strin
     } else {
         format!("{} · in {} min", event.title, event.minutes_until)
     }
+}
+
+/// Show a floating overlay prompt for an upcoming meeting.
+/// The overlay has "Join & Record" (if URL) or "Record" + "Dismiss" buttons.
+fn show_meeting_prompt(app: &tauri::AppHandle, event: &minutes_core::calendar::CalendarEvent) {
+    // Don't show if already recording
+    if let Some(state) = app.try_state::<commands::AppState>() {
+        if state.recording.load(Ordering::Relaxed) || state.processing.load(Ordering::Relaxed) {
+            return;
+        }
+    }
+
+    // Close any existing prompt window
+    if let Some(win) = app.get_webview_window("meeting-prompt") {
+        win.close().ok();
+    }
+
+    // Encode event data in URL fragment: title|minutesUntil|url
+    let url_part = event.url.as_deref().unwrap_or("");
+    let fragment = format!(
+        "{}|{}|{}",
+        event.title.replace('|', " "),
+        event.minutes_until,
+        url_part
+    );
+    let encoded = fragment
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "-._~ |/".contains(c) {
+                c.to_string()
+            } else {
+                format!("%{:02X}", c as u32)
+            }
+        })
+        .collect::<String>();
+    let url = format!("meeting-prompt.html#{}", encoded);
+
+    // Position: top-right of main screen, below menu bar
+    let (pos_x, pos_y) = get_top_right_position(340.0, 140.0);
+
+    match WebviewWindowBuilder::new(app, "meeting-prompt", WebviewUrl::App(url.into()))
+        .title("Upcoming Meeting")
+        .inner_size(340.0, 140.0)
+        .position(pos_x, pos_y)
+        .resizable(false)
+        .decorations(false)
+        .always_on_top(true)
+        .focused(true)
+        .skip_taskbar(true)
+        .build()
+    {
+        Ok(_) => eprintln!("[calendar] meeting prompt shown for: {}", event.title),
+        Err(e) => eprintln!("[calendar] failed to show meeting prompt: {}", e),
+    }
+}
+
+/// Calculate position for top-right placement, 16px from screen edge.
+fn get_top_right_position(width: f64, height: f64) -> (f64, f64) {
+    let _ = height;
+    // Default to a reasonable position; Tauri doesn't expose screen size easily
+    // from a non-window context, so we use a heuristic for common displays.
+    // The window will be placed at x=screen_width - window_width - 16, y=38 (below menu bar).
+    // For a 1440px-wide MacBook display at 2x: logical width ~1440
+    // For a 1920px-wide external: logical width ~1920
+    // We'll use 1440 as a safe default — the window stays visible on any Mac screen.
+    let screen_width = 1440.0;
+    let x = screen_width - width - 16.0;
+    let y = 38.0; // Below the macOS menu bar
+    (x, y)
 }
 
 fn refresh_calendar_items(
@@ -162,26 +231,16 @@ fn refresh_calendar_items(
     for e in &all_events {
         eprintln!("[calendar]   {} — in {} min", e.title, e.minutes_until);
     }
-    // Notify for meetings starting in ≤ MEETING_NOTIFY_MINUTES (once per event)
+    // Show meeting prompt overlay for meetings starting in ≤ MEETING_NOTIFY_MINUTES (once per event)
     for e in &all_events {
         if e.minutes_until >= 0
             && e.minutes_until <= MEETING_NOTIFY_MINUTES
             && !state.notified.contains(&e.title)
         {
-            let body = if e.minutes_until == 0 {
-                format!("{} is starting now. Click to record.", e.title)
-            } else if e.minutes_until == 1 {
-                format!("{} starts in 1 minute. Click to record.", e.title)
-            } else {
-                format!(
-                    "{} starts in {} minutes. Click to record.",
-                    e.title, e.minutes_until
-                )
-            };
-            crate::commands::show_user_notification("Upcoming Meeting", &body);
+            show_meeting_prompt(app, e);
             state.notified.insert(e.title.clone());
             eprintln!(
-                "[calendar] notified: {} (in {} min)",
+                "[calendar] prompted: {} (in {} min)",
                 e.title, e.minutes_until
             );
         }
@@ -693,6 +752,7 @@ fn main() {
             commands::cmd_vault_status,
             commands::cmd_vault_setup,
             commands::cmd_vault_unlink,
+            commands::cmd_open_meeting_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running minutes app");

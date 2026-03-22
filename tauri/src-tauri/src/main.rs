@@ -180,14 +180,19 @@ fn refresh_calendar_items(
             };
             crate::commands::show_user_notification("Upcoming Meeting", &body);
             state.notified.insert(e.title.clone());
-            eprintln!("[calendar] notified: {} (in {} min)", e.title, e.minutes_until);
+            eprintln!(
+                "[calendar] notified: {} (in {} min)",
+                e.title, e.minutes_until
+            );
         }
     }
 
     // Clean up old notifications (events that have passed)
-    state
-        .notified
-        .retain(|title| all_events.iter().any(|e| &e.title == title && e.minutes_until >= -5));
+    state.notified.retain(|title| {
+        all_events
+            .iter()
+            .any(|e| &e.title == title && e.minutes_until >= -5)
+    });
 
     let events: Vec<_> = all_events
         .into_iter()
@@ -248,6 +253,7 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(commands::AppState {
             recording: recording.clone(),
             starting: starting.clone(),
@@ -684,6 +690,9 @@ fn main() {
             commands::cmd_get_settings,
             commands::cmd_set_setting,
             commands::cmd_get_storage_stats,
+            commands::cmd_vault_status,
+            commands::cmd_vault_setup,
+            commands::cmd_vault_unlink,
         ])
         .run(tauri::generate_context!())
         .expect("error while running minutes app");

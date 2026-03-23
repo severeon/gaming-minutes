@@ -216,13 +216,19 @@ Minutes exposes a standard MCP server. Point any MCP-compatible client at it:
 **Interactive dashboard (Claude Desktop):** 5 tools render an inline interactive UI via [MCP Apps](https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/apps) — meeting list with filter/search, detail view with fullscreen + "Send to Claude" context injection, person profiles, consistency reports. Text-only clients see the same data as plain text.
 
 ### Claude Code (Plugin)
+
+Install the plugin directly from this repo:
 ```
-.claude/plugins/minutes/
-├── 11 skills:
-│   ├── Core: /minutes record, search, list, note, verify, setup, cleanup
-│   └── Interactive: /minutes prep, debrief, recap, weekly
-├── 1 agent: meeting-analyst (cross-meeting intelligence)
-└── 2 hooks: post-recording alerts + proactive meeting reminders
+/plugin marketplace add silverstein/minutes
+/plugin install minutes@silverstein-minutes
+```
+
+11 skills, 1 agent, 2 hooks:
+```
+├── Core: /minutes record, search, list, note, verify, setup, cleanup
+├── Interactive: /minutes prep, debrief, recap, weekly
+├── Agent: meeting-analyst (cross-meeting intelligence)
+└── Hooks: post-recording alerts + proactive meeting reminders
 ```
 
 **Meeting lifecycle skills** — inspired by [gstack](https://github.com/garrytan/gstack)'s interactive skill pattern:

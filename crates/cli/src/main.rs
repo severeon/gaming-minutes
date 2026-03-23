@@ -751,7 +751,17 @@ fn cmd_actions(assignee: Option<&str>, config: &Config) -> Result<()> {
 
 fn cmd_list(limit: usize, content_type: Option<String>, config: &Config) -> Result<()> {
     // List delegates to search with an empty query — DRY, no duplicated file walking
-    cmd_search("", content_type, None, limit, false, None, None, "text", config)
+    cmd_search(
+        "",
+        content_type,
+        None,
+        limit,
+        false,
+        None,
+        None,
+        "text",
+        config,
+    )
 }
 
 fn cmd_export(

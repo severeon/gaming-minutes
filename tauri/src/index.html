@@ -2390,6 +2390,7 @@
     });
 
     readinessButton.addEventListener('click', () => {
+      loadReadinessItems();
       readinessOverlay.classList.add('active');
     });
     document.getElementById('btn-readiness-close').addEventListener('click', closeReadiness);

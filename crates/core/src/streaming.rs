@@ -1,6 +1,6 @@
 use crate::error::CaptureError;
-use crossbeam_channel::{Receiver, Sender, bounded};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 

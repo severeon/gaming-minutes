@@ -42,7 +42,7 @@ impl Vad {
             noise_floor: 0.001,
             multiplier: 4.0,
             is_speaking: false,
-            hangover_chunks: 5,     // 500ms hangover
+            hangover_chunks: 5, // 500ms hangover
             hangover_remaining: 0,
             silence_ms: 0,
             chunk_ms: 100,
@@ -114,7 +114,9 @@ mod tests {
     #[test]
     fn speech_detected() {
         let mut vad = Vad::new();
-        for _ in 0..10 { vad.process(0.0005); }
+        for _ in 0..10 {
+            vad.process(0.0005);
+        }
         let r = vad.process(0.05);
         assert!(r.speaking);
         assert_eq!(r.silence_ms, 0);
@@ -123,14 +125,18 @@ mod tests {
     #[test]
     fn hangover_prevents_flapping() {
         let mut vad = Vad::new();
-        for _ in 0..10 { vad.process(0.0005); }
+        for _ in 0..10 {
+            vad.process(0.0005);
+        }
         vad.process(0.05);
         assert!(vad.is_speaking);
         // Brief silence — hangover keeps speaking
         let r = vad.process(0.0005);
         assert!(r.speaking);
         // After hangover expires
-        for _ in 0..6 { vad.process(0.0005); }
+        for _ in 0..6 {
+            vad.process(0.0005);
+        }
         assert!(!vad.process(0.0005).speaking);
     }
 
@@ -138,7 +144,9 @@ mod tests {
     fn noise_floor_adapts() {
         let mut vad = Vad::new();
         let initial = vad.noise_floor;
-        for _ in 0..100 { vad.process(0.003); }
+        for _ in 0..100 {
+            vad.process(0.003);
+        }
         assert!(vad.noise_floor > initial);
     }
 }

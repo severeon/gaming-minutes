@@ -32,10 +32,15 @@ fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Option<std::proce
         }
         Err(_) => {
             // Timed out — kill the subprocess
-            eprintln!("[calendar] subprocess {} timed out after {:?}, killing", child_id, timeout);
+            eprintln!(
+                "[calendar] subprocess {} timed out after {:?}, killing",
+                child_id, timeout
+            );
             #[cfg(unix)]
             {
-                unsafe { libc::kill(child_id as i32, libc::SIGKILL); }
+                unsafe {
+                    libc::kill(child_id as i32, libc::SIGKILL);
+                }
             }
             let _ = handle.join();
             None

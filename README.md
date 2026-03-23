@@ -302,8 +302,8 @@ Minutes exposes a standard MCP server. Point any MCP-compatible client at it:
 {
   "mcpServers": {
     "minutes": {
-      "command": "node",
-      "args": ["path/to/minutes/crates/mcp/dist/index.js"]
+      "command": "npx",
+      "args": ["minutes-mcp"]
     }
   }
 }

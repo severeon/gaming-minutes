@@ -72,7 +72,7 @@ minutes/
 ├── BUILD-STATUS.md            # Build progress tracker
 ├── Cargo.toml                 # Workspace root
 ├── crates/
-│   ├── core/src/              # 17 Rust modules — the engine
+│   ├── core/src/              # 18 Rust modules — the engine
 │   │   ├── capture.rs         # Audio capture (cpal)
 │   │   ├── transcribe.rs      # Whisper.cpp + symphonia format conversion
 │   │   ├── diarize.rs         # Pyannote subprocess
@@ -85,6 +85,7 @@ minutes/
 │   │   ├── config.rs          # TOML config with compiled defaults
 │   │   ├── pid.rs             # PID file lifecycle (flock atomic)
 │   │   ├── events.rs          # Append-only JSONL event log for agent reactivity
+│   │   ├── streaming_whisper.rs # Progressive transcription (partial results every 2s)
 │   │   ├── logging.rs         # Structured JSON logging
 │   │   └── error.rs           # Per-module error types (thiserror)
 │   ├── cli/                   # CLI binary — 15 commands
@@ -147,8 +148,8 @@ node test/mcp_tools_test.mjs                        # 8 MCP integration tests
 
 ## Test Coverage
 
-130 tests total:
-- 87 unit tests (all core modules including screen, calendar, config, watch cross-device)
+136 tests total:
+- 90 unit tests (all core modules including screen, calendar, config, watch cross-device, streaming whisper)
 - 8 integration tests (pipeline, permissions, collisions, search filters)
 - 2 real whisper tests (transcription + no-speech detection with tiny model)
 - 30 reader.ts unit tests (vitest — frontmatter parsing, listing, search, actions, profiles)

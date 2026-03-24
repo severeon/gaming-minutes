@@ -98,6 +98,13 @@ minutes person "Alex"                              # Build a profile from meetin
 minutes consistency                                # Flag contradicting decisions + stale commitments
 ```
 
+### Dictation mode
+```bash
+minutes dictate                                  # Speak → text appears as you talk
+minutes dictate --stdout                         # Output to stdout instead of clipboard
+```
+Text streams progressively as you speak (partial results every 2 seconds). Goes to clipboard + daily note. Local whisper, no cloud.
+
 ### System diagnostics
 ```bash
 minutes health                                   # Check model, mic, calendar, disk

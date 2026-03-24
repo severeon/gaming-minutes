@@ -1,4 +1,4 @@
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperState};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
 // ──────────────────────────────────────────────────────────────
 // Streaming whisper transcription — progressive text output.

@@ -27,6 +27,7 @@ cargo run --bin minutes -- stop      # Stop and process
 ```bash
 ./scripts/build.sh                   # Builds everything and installs CLI
 ./scripts/build.sh --install         # Same + copies .app to /Applications
+./scripts/install-dev-app.sh         # Canonical signed dev app install to ~/Applications/Minutes Dev.app
 # Or manually:
 export CXXFLAGS="-I$(xcrun --show-sdk-path)/usr/include/c++/v1"
 cargo build --release -p minutes-cli           # CLI binary
@@ -37,11 +38,49 @@ open target/release/bundle/macos/Minutes.app   # Launch app
 
 **IMPORTANT**: After any code change, you must rebuild ALL affected targets:
 - CLI changes: `cargo build --release -p minutes-cli && cp target/release/minutes ~/.local/bin/minutes`
-- Tauri changes: `cargo tauri build --bundles app` then relaunch Minutes.app
+- Tauri changes: `cargo tauri build --bundles app` then relaunch the appropriate app bundle
+- TCC-sensitive desktop work (hotkeys, Screen Recording, Input Monitoring, Accessibility): `./scripts/install-dev-app.sh`
 - MCP server changes: `cd crates/mcp && npm run build` (compiles TS server + builds UI, then restart MCP client sessions)
 - MCP App UI only: `cd crates/mcp && npm run build:ui` (rebuild just the dashboard HTML)
 - All Rust + app: `./scripts/build.sh` (add `--install` to copy .app to /Applications)
 - **Don't forget the MCP server** — it's TypeScript, not Rust. `./scripts/build.sh` does NOT rebuild it. Always run `cd crates/mcp && npm run build` after touching `crates/mcp/src/index.ts` or `crates/mcp/ui/`.
+
+## Desktop Identity Rules
+
+For macOS permission-sensitive development, there are now two distinct desktop app identities:
+
+- Production app:
+  - name: `Minutes.app`
+  - bundle id: `com.useminutes.desktop`
+  - canonical install path: `/Applications/Minutes.app`
+- Development app:
+  - name: `Minutes Dev.app`
+  - bundle id: `com.useminutes.desktop.dev`
+  - canonical install path: `~/Applications/Minutes Dev.app`
+
+Use the dev app for any work involving:
+
+- dictation hotkeys / Input Monitoring
+- Screen Recording prompts
+- AppleScript / Accessibility automation
+- any repeated TCC permission prompt investigation
+
+Do not trust results from:
+
+- `./Minutes.app`
+- raw `target/debug/minutes-app`
+- raw `target/release/minutes-app`
+- repo-local bundle outputs launched directly from `target/`
+
+Those identities are not stable enough for TCC debugging.
+
+Native hotkey sanity check:
+
+```bash
+~/Applications/Minutes\ Dev.app/Contents/MacOS/minutes-app --diagnose-hotkey
+```
+
+See [docs/DESKTOP-DEVELOPMENT.md](/Users/silverbook/Sites/minutes/docs/DESKTOP-DEVELOPMENT.md) for the full workflow.
 
 ## Release Process
 

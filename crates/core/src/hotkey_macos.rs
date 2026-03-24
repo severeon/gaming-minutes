@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 // ──────────────────────────────────────────────────────────────
 // Native macOS hotkey via CGEventTap.
@@ -150,6 +151,15 @@ pub struct HotkeyMonitor {
     _thread: Option<std::thread::JoinHandle<()>>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HotkeyProbeResult {
+    pub keycode: i64,
+    pub accessibility_trusted: bool,
+    pub status: String,
+    pub message: String,
+    pub elapsed_ms: u128,
+}
+
 impl HotkeyMonitor {
     /// Start monitoring a specific keycode for press/release events.
     ///
@@ -195,6 +205,113 @@ impl Drop for HotkeyMonitor {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Attempt to start the native macOS hotkey monitor and report whether the
+/// current process identity can create the CGEventTap successfully.
+pub fn probe_hotkey_monitor(keycode: i64, timeout: Duration) -> HotkeyProbeResult {
+    let accessibility_trusted = is_accessibility_trusted();
+    let started_at = Instant::now();
+    let (tx, rx) = std::sync::mpsc::channel::<HotkeyMonitorStatus>();
+
+    let monitor = match HotkeyMonitor::start(
+        keycode,
+        |_| {},
+        move |status| {
+            let _ = tx.send(status);
+        },
+    ) {
+        Ok(monitor) => monitor,
+        Err(error) => {
+            return HotkeyProbeResult {
+                keycode,
+                accessibility_trusted,
+                status: "spawn-failed".into(),
+                message: error,
+                elapsed_ms: started_at.elapsed().as_millis(),
+            };
+        }
+    };
+
+    let deadline = started_at + timeout;
+    let mut result = HotkeyProbeResult {
+        keycode,
+        accessibility_trusted,
+        status: "timeout".into(),
+        message: format!(
+            "Timed out after {}ms waiting for the native hotkey monitor to report status.",
+            timeout.as_millis()
+        ),
+        elapsed_ms: timeout.as_millis(),
+    };
+
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        match rx.recv_timeout(remaining) {
+            Ok(HotkeyMonitorStatus::Starting) => {
+                result = HotkeyProbeResult {
+                    keycode,
+                    accessibility_trusted,
+                    status: "starting".into(),
+                    message: "Native hotkey monitor thread started and is waiting for CGEventTap activation.".into(),
+                    elapsed_ms: started_at.elapsed().as_millis(),
+                };
+            }
+            Ok(HotkeyMonitorStatus::Active) => {
+                result = HotkeyProbeResult {
+                    keycode,
+                    accessibility_trusted,
+                    status: "active".into(),
+                    message: "CGEventTap started successfully for this process identity.".into(),
+                    elapsed_ms: started_at.elapsed().as_millis(),
+                };
+                break;
+            }
+            Ok(HotkeyMonitorStatus::Failed(message)) => {
+                result = HotkeyProbeResult {
+                    keycode,
+                    accessibility_trusted,
+                    status: "failed".into(),
+                    message,
+                    elapsed_ms: started_at.elapsed().as_millis(),
+                };
+                break;
+            }
+            Ok(HotkeyMonitorStatus::Stopped) => {
+                result = HotkeyProbeResult {
+                    keycode,
+                    accessibility_trusted,
+                    status: "stopped".into(),
+                    message: "Native hotkey monitor stopped before it reported active status."
+                        .into(),
+                    elapsed_ms: started_at.elapsed().as_millis(),
+                };
+                break;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                break;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                result = HotkeyProbeResult {
+                    keycode,
+                    accessibility_trusted,
+                    status: "disconnected".into(),
+                    message: "Native hotkey monitor status channel disconnected unexpectedly."
+                        .into(),
+                    elapsed_ms: started_at.elapsed().as_millis(),
+                };
+                break;
+            }
+        }
+    }
+
+    monitor.stop();
+    result.elapsed_ms = started_at.elapsed().as_millis();
+    result
 }
 
 /// Context passed through the CGEventTap C callback via void* user_info.

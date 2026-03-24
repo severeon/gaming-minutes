@@ -1,6 +1,6 @@
 #!/bin/bash
-# Build everything: CLI, Tauri app, and install
-set -e
+# Build everything: CLI, Tauri app, and optional production-style install
+set -euo pipefail
 
 export CXXFLAGS="-I$(xcrun --show-sdk-path)/usr/include/c++/v1"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
@@ -45,7 +45,7 @@ echo ""
 # Install to /Applications if --install flag is passed
 if [[ "$*" == *"--install"* ]]; then
     echo "=== Installing app to /Applications ==="
-    cp -r target/release/bundle/macos/Minutes.app /Applications/
+    cp -rf target/release/bundle/macos/Minutes.app /Applications/
     echo "  Installed to /Applications/Minutes.app"
 fi
 
@@ -59,3 +59,4 @@ else
     echo "  Launch: open target/release/bundle/macos/Minutes.app"
     echo "  Install: ./scripts/build.sh --install"
 fi
+echo "  Dev app (stable TCC identity): ./scripts/install-dev-app.sh"

@@ -456,9 +456,19 @@ brew install --cask silverstein/tap/minutes
 export CXXFLAGS="-I$(xcrun --show-sdk-path)/usr/include/c++/v1"
 export MACOSX_DEPLOYMENT_TARGET=11.0
 cargo tauri build --bundles app
+
+# For local desktop development with stable macOS permissions
+./scripts/install-dev-app.sh
 ```
 
 The desktop app adds a system tray icon, recording controls, audio visualizer, and a meeting list window. macOS will prompt for microphone permission on first recording.
+
+For macOS development, use a dedicated signed dev app identity:
+
+- Production app: `/Applications/Minutes.app` (`com.useminutes.desktop`)
+- Development app: `~/Applications/Minutes Dev.app` (`com.useminutes.desktop.dev`)
+
+If you are testing hotkeys, Screen Recording, Input Monitoring, or repeated macOS permission prompts, launch only `Minutes Dev.app` via `./scripts/install-dev-app.sh`. Avoid the repo symlink `./Minutes.app`, raw `target/` binaries, or ad-hoc local bundles for TCC-sensitive testing.
 
 **Privacy:** All Minutes windows are hidden from screen sharing by default — other participants on Zoom/Meet/Teams won't see the app. Toggle via the tray menu: "Hide from Screen Share ✓".
 
@@ -471,6 +481,15 @@ The most common cause is microphone permissions. Check System Settings → Priva
 
 **Build fails with C++ errors on macOS 26+:**
 whisper.cpp needs the SDK include path. Set `CXXFLAGS` as shown above before building.
+
+**Dictation hotkey still fails after you enabled it in System Settings:**
+The native hotkey uses macOS Input Monitoring, which is separate from Screen Recording. The fastest way to test the exact installed desktop identity is:
+
+```bash
+~/Applications/Minutes\ Dev.app/Contents/MacOS/minutes-app --diagnose-hotkey
+```
+
+Use `./scripts/install-dev-app.sh` first so you are testing the stable development app identity rather than a raw `target/` build.
 
 ## Configuration
 

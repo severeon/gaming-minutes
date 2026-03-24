@@ -13,6 +13,7 @@
 | 2026-03-23 | self | Reused browser `keyCode` values for the dictation hotkey picker even though the native macOS monitor expects virtual keycodes, so many custom keys could never trigger | For browser-captured shortcuts that feed native macOS APIs, map from `KeyboardEvent.code` to macOS virtual keycodes explicitly instead of persisting DOM keycodes |
 | 2026-03-23 | self | Moving the dictation hotkey startup off the UI thread still left a race where stale monitor callbacks could overwrite the newest runtime state | When a background monitor can be restarted quickly, track a generation/token in shared state and ignore lifecycle updates from older workers |
 | 2026-03-23 | self | Reached for `apply_patch` and `python` out of habit while fixing `crates/core/src/pid.rs`; `apply_patch` kept timing out on this file and this shell only has `python3` | If a targeted edit tool is flaky here, switch promptly to `python3` and verify the rewritten file immediately before continuing |
+| 2026-03-24 | self | Moved `tauri::AppHandle` into the dictation hotkey closure and then tried to reuse it for later status emission, which broke `cargo test` with a borrow-of-moved-value compile error | When a Tauri callback needs the same app handle in multiple async/closure paths, clone named handles up front (`app_for_events`, `app_for_status`, etc.) before wiring the monitor |
 
 ## User Preferences
 - For coding/debugging/testing/review tasks, prioritize technical implementation detail and concrete verification.

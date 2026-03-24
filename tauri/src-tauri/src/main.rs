@@ -13,6 +13,59 @@ mod commands;
 mod context;
 mod pty;
 
+#[cfg(target_os = "macos")]
+fn maybe_run_hotkey_diagnostic() -> Option<i32> {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if !args.iter().any(|arg| arg == "--diagnose-hotkey") {
+        return None;
+    }
+
+    let mut keycode = minutes_core::hotkey_macos::KEYCODE_CAPS_LOCK;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--diagnose-hotkey-keycode" {
+            if let Some(value) = iter.next() {
+                if let Ok(parsed) = value.parse::<i64>() {
+                    keycode = parsed;
+                }
+            }
+        } else if let Some(value) = arg.strip_prefix("--diagnose-hotkey-keycode=") {
+            if let Ok(parsed) = value.parse::<i64>() {
+                keycode = parsed;
+            }
+        }
+    }
+
+    let probe = minutes_core::hotkey_macos::probe_hotkey_monitor(
+        keycode,
+        std::time::Duration::from_millis(1200),
+    );
+    let current_exe = std::env::current_exe()
+        .ok()
+        .map(|path| path.display().to_string());
+    let bundle_root = current_exe.as_ref().and_then(|path| {
+        path.strip_suffix("/Contents/MacOS/minutes-app")
+            .map(|root| root.to_string())
+    });
+
+    let payload = serde_json::json!({
+        "mode": "diagnose-hotkey",
+        "current_exe": current_exe,
+        "bundle_root": bundle_root,
+        "probe": probe,
+    });
+
+    match serde_json::to_string_pretty(&payload) {
+        Ok(json) => println!("{}", json),
+        Err(error) => {
+            eprintln!("failed to encode hotkey diagnostic: {}", error);
+            return Some(1);
+        }
+    }
+
+    Some(if probe.status == "active" { 0 } else { 2 })
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         win.show().ok();
@@ -285,6 +338,11 @@ fn refresh_calendar_items(
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if let Some(code) = maybe_run_hotkey_diagnostic() {
+        std::process::exit(code);
+    }
+
     let recording = Arc::new(AtomicBool::new(false));
     let starting = Arc::new(AtomicBool::new(false));
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -326,6 +384,7 @@ fn main() {
             hotkey_runtime: hotkey_runtime.clone(),
             discard_short_hotkey_capture: discard_short_hotkey_capture.clone(),
             pty_manager: Arc::new(Mutex::new(pty::PtyManager::default())),
+            dictation_active: Arc::new(AtomicBool::new(false)),
             dictation_stop_flag: Arc::new(AtomicBool::new(false)),
         })
         .setup(move |app| {

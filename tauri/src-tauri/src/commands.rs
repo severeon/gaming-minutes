@@ -20,6 +20,7 @@ pub struct AppState {
     pub hotkey_runtime: Arc<Mutex<HotkeyRuntime>>,
     pub discard_short_hotkey_capture: Arc<AtomicBool>,
     pub pty_manager: Arc<Mutex<crate::pty::PtyManager>>,
+    pub dictation_active: Arc<AtomicBool>,
     pub dictation_stop_flag: Arc<AtomicBool>,
 }
 
@@ -179,6 +180,13 @@ fn reset_hotkey_capture_state(
     if let Some(runtime) = runtime {
         clear_hotkey_runtime(runtime);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn is_short_hotkey_tap(started_at: Option<Instant>, now: Instant) -> bool {
+    started_at
+        .map(|pressed| now.duration_since(pressed).as_millis() < HOTKEY_HOLD_THRESHOLD_MS as u128)
+        .unwrap_or(false)
 }
 
 fn preserve_failed_capture(wav_path: &std::path::Path, config: &Config) -> Option<PathBuf> {
@@ -2404,6 +2412,39 @@ mod tests {
         assert!(!discard.load(Ordering::Relaxed));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn short_hotkey_tap_detection_matches_threshold() {
+        let started = Instant::now() - std::time::Duration::from_millis(200);
+        assert!(is_short_hotkey_tap(Some(started), Instant::now()));
+
+        let started = Instant::now() - std::time::Duration::from_millis(350);
+        assert!(!is_short_hotkey_tap(Some(started), Instant::now()));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clear_dictation_hotkey_capture_state_resets_press_tracking() {
+        let mut runtime = DictationHotkeyRuntime {
+            generation: 2,
+            keycode: 57,
+            lifecycle: DictationHotkeyLifecycle::Active,
+            last_error: None,
+            monitor: None,
+            key_down: true,
+            key_down_started_at: Some(Instant::now()),
+            active_capture: Some(HotkeyCaptureStyle::Hold),
+            hold_generation: 4,
+        };
+
+        clear_dictation_hotkey_capture_state(&mut runtime);
+
+        assert!(!runtime.key_down);
+        assert!(runtime.key_down_started_at.is_none());
+        assert!(runtime.active_capture.is_none());
+        assert_eq!(runtime.hold_generation, 4);
+    }
+
     #[test]
     fn extract_paste_text_returns_summary_section() {
         let content = "---\ntitle: Demo\n---\n\n## Summary\n\nShort summary.\n\n## Transcript\n\nFull transcript.\n";
@@ -2423,73 +2464,21 @@ mod tests {
 #[tauri::command]
 pub fn cmd_start_dictation(
     app: tauri::AppHandle,
-    state: tauri::State<AppState>,
+    _state: tauri::State<AppState>,
 ) -> Result<String, String> {
-    if state.recording.load(Ordering::Relaxed) {
-        return Err("Recording in progress — stop recording before dictating".into());
-    }
-
-    // Show the floating overlay
-    show_dictation_overlay(&app);
-
-    // Reset and use dedicated dictation stop flag
-    state.dictation_stop_flag.store(false, Ordering::Relaxed);
-
-    // Start dictation in background thread
-    let app_clone = app.clone();
-    let stop_flag = Arc::clone(&state.dictation_stop_flag);
-
-    std::thread::spawn(move || {
-        let config = Config::load();
-        let app_for_events = app_clone.clone();
-        let app_for_results = app_clone.clone();
-
-        let result = minutes_core::dictation::run(
-            stop_flag,
-            &config,
-            move |event| {
-                use minutes_core::dictation::DictationEvent;
-                let state_str = match &event {
-                    DictationEvent::Listening => "listening",
-                    DictationEvent::Accumulating => "accumulating",
-                    DictationEvent::Processing => "processing",
-                    DictationEvent::PartialText(_) => "partial",
-                    DictationEvent::Success => "success",
-                    DictationEvent::Error => "error",
-                    DictationEvent::Cancelled => "cancelled",
-                    DictationEvent::Yielded => "yielded",
-                };
-                app_for_events.emit("dictation:state", state_str).ok();
-
-                // Send partial text for live preview
-                if let DictationEvent::PartialText(text) = &event {
-                    app_for_events.emit("dictation:partial", text.as_str()).ok();
-                }
-
-                // Send audio level for waveform
-                if matches!(&event, DictationEvent::Accumulating) {
-                    let level = minutes_core::streaming::stream_audio_level();
-                    app_for_events.emit("dictation:level", level).ok();
-                }
-            },
-            move |result| {
-                app_for_results.emit("dictation:result", &result.text).ok();
-            },
-        );
-
-        if let Err(e) = result {
-            eprintln!("[dictation] error: {}", e);
-            app_clone.emit("dictation:state", "error").ok();
-        }
-    });
-
-    Ok("Dictation started".into())
+    start_dictation_session(&app, None)
 }
 
 #[tauri::command]
 pub fn cmd_stop_dictation(state: tauri::State<AppState>) -> Result<String, String> {
-    state.dictation_stop_flag.store(true, Ordering::Relaxed);
-    Ok("Dictation stop requested".into())
+    if state.dictation_active.load(Ordering::Relaxed) {
+        state.dictation_stop_flag.store(true, Ordering::Relaxed);
+        return Ok("Dictation stop requested".into());
+    }
+    if dictation_pid_active() {
+        return Err("Dictation is running in another Minutes process.".into());
+    }
+    Err("Dictation is not active".into())
 }
 
 fn show_dictation_overlay(app: &tauri::AppHandle) {
@@ -2557,6 +2546,10 @@ struct DictationHotkeyRuntime {
     lifecycle: DictationHotkeyLifecycle,
     last_error: Option<String>,
     monitor: Option<minutes_core::hotkey_macos::HotkeyMonitor>,
+    key_down: bool,
+    key_down_started_at: Option<Instant>,
+    active_capture: Option<HotkeyCaptureStyle>,
+    hold_generation: u64,
 }
 
 #[cfg(target_os = "macos")]
@@ -2568,6 +2561,10 @@ impl Default for DictationHotkeyRuntime {
             lifecycle: DictationHotkeyLifecycle::Disabled,
             last_error: None,
             monitor: None,
+            key_down: false,
+            key_down_started_at: None,
+            active_capture: None,
+            hold_generation: 0,
         }
     }
 }
@@ -2606,12 +2603,11 @@ fn build_dictation_hotkey_status(runtime: &DictationHotkeyRuntime) -> DictationH
 
     let message = match runtime.lifecycle {
         DictationHotkeyLifecycle::Disabled => {
-            "Tap to start dictation, tap again to stop. Requires Input Monitoring permission."
-                .to_string()
+            "Hold the selected key to dictate, or tap to lock and tap again to stop. Requires Input Monitoring permission.".to_string()
         }
         DictationHotkeyLifecycle::Starting => "Starting native dictation hotkey...".to_string(),
         DictationHotkeyLifecycle::Active => {
-            "Active - tap the selected key to start or stop dictation.".to_string()
+            "Active - hold the selected key to dictate, or tap to lock and tap again to stop.".to_string()
         }
         DictationHotkeyLifecycle::Failed => runtime
             .last_error
@@ -2640,6 +2636,105 @@ fn emit_dictation_hotkey_status(app: &tauri::AppHandle) {
     app.emit("dictation-hotkey:status", &status).ok();
 }
 
+fn dictation_pid_active() -> bool {
+    minutes_core::pid::check_pid_file(&minutes_core::pid::dictation_pid_path())
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+#[cfg(target_os = "macos")]
+fn clear_dictation_hotkey_capture_state(runtime: &mut DictationHotkeyRuntime) {
+    runtime.key_down = false;
+    runtime.key_down_started_at = None;
+    runtime.active_capture = None;
+}
+
+fn start_dictation_session(
+    app: &tauri::AppHandle,
+    capture_style: Option<HotkeyCaptureStyle>,
+) -> Result<String, String> {
+    let state = app.state::<AppState>();
+
+    if state.recording.load(Ordering::Relaxed) {
+        return Err("Recording in progress — stop recording before dictating".into());
+    }
+
+    if state.processing.load(Ordering::Relaxed) || minutes_core::pid::status().processing {
+        return Err("Minutes is still processing the previous capture. Finish that first.".into());
+    }
+
+    if state.dictation_active.load(Ordering::Relaxed) || dictation_pid_active() {
+        return Err("Dictation is already in progress.".into());
+    }
+
+    show_dictation_overlay(app);
+
+    state.dictation_stop_flag.store(false, Ordering::Relaxed);
+    state.dictation_active.store(true, Ordering::Relaxed);
+
+    #[cfg(target_os = "macos")]
+    if let Some(style) = capture_style {
+        let mut runtime = lock_dictation_hotkey_runtime();
+        runtime.active_capture = Some(style);
+    }
+
+    let app_clone = app.clone();
+    let stop_flag = Arc::clone(&state.dictation_stop_flag);
+    let dictation_active = Arc::clone(&state.dictation_active);
+
+    std::thread::spawn(move || {
+        let config = Config::load();
+        let app_for_events = app_clone.clone();
+        let app_for_results = app_clone.clone();
+
+        let result = minutes_core::dictation::run(
+            stop_flag,
+            &config,
+            move |event| {
+                use minutes_core::dictation::DictationEvent;
+                let state_str = match &event {
+                    DictationEvent::Listening => "listening",
+                    DictationEvent::Accumulating => "accumulating",
+                    DictationEvent::Processing => "processing",
+                    DictationEvent::PartialText(_) => "partial",
+                    DictationEvent::Success => "success",
+                    DictationEvent::Error => "error",
+                    DictationEvent::Cancelled => "cancelled",
+                    DictationEvent::Yielded => "yielded",
+                };
+                app_for_events.emit("dictation:state", state_str).ok();
+
+                if let DictationEvent::PartialText(text) = &event {
+                    app_for_events.emit("dictation:partial", text.as_str()).ok();
+                }
+
+                if matches!(&event, DictationEvent::Accumulating) {
+                    let level = minutes_core::streaming::stream_audio_level();
+                    app_for_events.emit("dictation:level", level).ok();
+                }
+            },
+            move |result| {
+                app_for_results.emit("dictation:result", &result.text).ok();
+            },
+        );
+
+        dictation_active.store(false, Ordering::Relaxed);
+        #[cfg(target_os = "macos")]
+        {
+            let mut runtime = lock_dictation_hotkey_runtime();
+            clear_dictation_hotkey_capture_state(&mut runtime);
+        }
+
+        if let Err(e) = result {
+            eprintln!("[dictation] error: {}", e);
+            app_clone.emit("dictation:state", "error").ok();
+        }
+    });
+
+    Ok("Dictation started".into())
+}
+
 #[cfg(target_os = "macos")]
 pub fn start_dictation_hotkey_with_keycode(
     app: tauri::AppHandle,
@@ -2647,15 +2742,13 @@ pub fn start_dictation_hotkey_with_keycode(
 ) -> Result<DictationHotkeyStatus, String> {
     use minutes_core::hotkey_macos::{HotkeyEvent, HotkeyMonitor, HotkeyMonitorStatus};
 
-    let app_clone = app.clone();
-    let is_dictating = Arc::new(AtomicBool::new(false));
-
     let previous_monitor = {
         let mut runtime = lock_dictation_hotkey_runtime();
         runtime.generation = runtime.generation.wrapping_add(1);
         runtime.keycode = keycode;
         runtime.lifecycle = DictationHotkeyLifecycle::Starting;
         runtime.last_error = None;
+        clear_dictation_hotkey_capture_state(&mut runtime);
         runtime.monitor.take()
     };
     if let Some(monitor) = previous_monitor {
@@ -2669,77 +2762,78 @@ pub fn start_dictation_hotkey_with_keycode(
     };
 
     let app_for_status = app.clone();
+    let app_for_events = app.clone();
     let monitor = match HotkeyMonitor::start(
         keycode,
-        move |event| {
-            if event != HotkeyEvent::Press {
-                return; // Only act on press (tap-to-toggle)
-            }
-
-            let currently_dictating = is_dictating.load(Ordering::Relaxed);
-
-            if currently_dictating {
-                // Stop dictation
-                if let Some(state) = app_clone.try_state::<AppState>() {
-                    state.dictation_stop_flag.store(true, Ordering::Relaxed);
-                }
-                is_dictating.store(false, Ordering::Relaxed);
-            } else {
-                // Start dictation (via Tauri command invocation)
-                is_dictating.store(true, Ordering::Relaxed);
-                let app_for_start = app_clone.clone();
-                let is_dict_clone = is_dictating.clone();
-                std::thread::spawn(move || {
-                    if let Some(state) = app_for_start.try_state::<AppState>() {
-                        if state.recording.load(Ordering::Relaxed) {
-                            eprintln!("[hotkey] recording active — skipping dictation");
-                            is_dict_clone.store(false, Ordering::Relaxed);
-                            return;
-                        }
-                        state.dictation_stop_flag.store(false, Ordering::Relaxed);
+        move |event| match event {
+            HotkeyEvent::Press => {
+                let generation = {
+                    let mut runtime = lock_dictation_hotkey_runtime();
+                    if runtime.key_down {
+                        return;
                     }
-                    show_dictation_overlay(&app_for_start);
+                    runtime.key_down = true;
+                    runtime.key_down_started_at = Some(Instant::now());
+                    runtime.hold_generation = runtime.hold_generation.wrapping_add(1);
+                    runtime.hold_generation
+                };
 
-                    let stop_flag = app_for_start
-                        .try_state::<AppState>()
-                        .map(|s| Arc::clone(&s.dictation_stop_flag))
-                        .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-
-                    let config = Config::load();
-                    let app_ev = app_for_start.clone();
-                    let app_res = app_for_start.clone();
-
-                    let result = minutes_core::dictation::run(
-                        stop_flag,
-                        &config,
-                        move |event| {
-                            use minutes_core::dictation::DictationEvent;
-                            let s = match &event {
-                                DictationEvent::Listening => "listening",
-                                DictationEvent::Accumulating => "accumulating",
-                                DictationEvent::Processing => "processing",
-                                DictationEvent::PartialText(_) => "partial",
-                                DictationEvent::Success => "success",
-                                DictationEvent::Error => "error",
-                                DictationEvent::Cancelled => "cancelled",
-                                DictationEvent::Yielded => "yielded",
-                            };
-                            app_ev.emit("dictation:state", s).ok();
-                            if let DictationEvent::PartialText(text) = &event {
-                                app_ev.emit("dictation:partial", text.as_str()).ok();
-                            }
-                        },
-                        move |result| {
-                            app_res.emit("dictation:result", &result.text).ok();
-                        },
-                    );
-
-                    is_dict_clone.store(false, Ordering::Relaxed);
-                    if let Err(e) = result {
-                        eprintln!("[hotkey] dictation error: {}", e);
-                        app_for_start.emit("dictation:state", "error").ok();
+                let app_for_hold = app_for_events.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(HOTKEY_HOLD_THRESHOLD_MS));
+                    let should_start_hold = {
+                        let runtime = lock_dictation_hotkey_runtime();
+                        runtime.key_down
+                            && runtime.hold_generation == generation
+                            && runtime.active_capture.is_none()
+                    };
+                    if !should_start_hold {
+                        return;
+                    }
+                    if let Err(error) =
+                        start_dictation_session(&app_for_hold, Some(HotkeyCaptureStyle::Hold))
+                    {
+                        show_user_notification("Dictation", &error);
                     }
                 });
+            }
+            HotkeyEvent::Release => {
+                let now = Instant::now();
+                let (active_capture, was_short_tap) = {
+                    let mut runtime = lock_dictation_hotkey_runtime();
+                    let pressed_at = runtime.key_down_started_at;
+                    runtime.key_down = false;
+                    runtime.key_down_started_at = None;
+                    (runtime.active_capture, is_short_hotkey_tap(pressed_at, now))
+                };
+
+                if matches!(active_capture, Some(HotkeyCaptureStyle::Hold)) {
+                    if let Some(state) = app_for_events.try_state::<AppState>() {
+                        state.dictation_stop_flag.store(true, Ordering::Relaxed);
+                    }
+                    return;
+                }
+
+                if !was_short_tap {
+                    return;
+                }
+
+                if let Some(state) = app_for_events.try_state::<AppState>() {
+                    if state.dictation_active.load(Ordering::Relaxed) {
+                        state.dictation_stop_flag.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                }
+
+                if dictation_pid_active() {
+                    return;
+                }
+
+                if let Err(error) =
+                    start_dictation_session(&app_for_events, Some(HotkeyCaptureStyle::Locked))
+                {
+                    show_user_notification("Dictation", &error);
+                }
             }
         },
         move |status| {
@@ -2769,6 +2863,7 @@ pub fn start_dictation_hotkey_with_keycode(
                     HotkeyMonitorStatus::Stopped => {
                         runtime.lifecycle = DictationHotkeyLifecycle::Disabled;
                         runtime.last_error = None;
+                        clear_dictation_hotkey_capture_state(&mut runtime);
                         runtime.monitor = None;
                         (false, true)
                     }
@@ -2821,6 +2916,7 @@ pub fn stop_dictation_hotkey() {
         runtime.generation = runtime.generation.wrapping_add(1);
         runtime.lifecycle = DictationHotkeyLifecycle::Disabled;
         runtime.last_error = None;
+        clear_dictation_hotkey_capture_state(&mut runtime);
         runtime.monitor.take()
     };
     if let Some(monitor) = monitor {

@@ -16,7 +16,7 @@ Use the dedicated dev app install flow instead:
 
 ```bash
 ./scripts/install-dev-app.sh
-~/Applications/Minutes\ Dev.app/Contents/MacOS/minutes-app --diagnose-hotkey
+./scripts/diagnose-desktop-hotkey.sh "$HOME/Applications/Minutes Dev.app"
 ```
 
 See [docs/DESKTOP-DEVELOPMENT.md](/Users/silverbook/Sites/minutes/docs/DESKTOP-DEVELOPMENT.md)

@@ -117,7 +117,7 @@ When shipping a new version:
    ```
    If 2FA blocks publish, use a granular access token with "Bypass 2FA" enabled.
    **IMPORTANT**: `crates/mcp/package.json` must depend on `"minutes-sdk": "^X.Y.Z"` (npm version), NOT `"file:../sdk"` (local path). Check before publishing.
-9. Redeploy landing page: `cd site && vercel deploy --yes --prod --scope evil-genius-laboratory`
+9. Redeploy landing page (Next.js + Remotion): `cd site && npm install && vercel deploy --yes --prod --scope evil-genius-laboratory`
 10. Update Homebrew tap formula if CLI changed
 
 ## Project Structure

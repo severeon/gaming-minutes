@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Crates.io](https://img.shields.io/crates/v/minutes-cli)](https://crates.io/crates/minutes-cli)
 
-**Your AI remembers every conversation you've had.** &nbsp; [useminutes.app](https://useminutes.app)
+**Open-source conversation memory.** &nbsp; [useminutes.app](https://useminutes.app)
 
 Agents have run logs. Humans have conversations. **minutes** captures the human side — the decisions, the intent, the context that agents need but can't observe — and makes it queryable.
 

@@ -319,9 +319,9 @@ Minutes exposes a standard MCP server. Point any MCP-compatible client at it:
 }
 ```
 
-**13 tools:** `start_recording`, `stop_recording`, `get_status`, `list_meetings`, `search_meetings`, `get_meeting`, `process_audio`, `add_note`, `consistency_report`, `get_person_profile`, `research_topic`, `qmd_collection_status`, `register_qmd_collection`
+**10 tools:** `start_recording`, `stop_recording`, `get_status`, `research_topic`, `process_audio`, `add_note`, `qmd_collection_status`, `register_qmd_collection`, `start_dictation`, `stop_dictation`
 
-**6 resources:** `minutes://meetings/recent`, `minutes://status`, `minutes://actions/open`, `minutes://events/recent`, `minutes://meetings/{slug}`, `ui://minutes/dashboard`
+**7 resources:** `minutes://meetings/recent`, `minutes://status`, `minutes://actions/open`, `minutes://events/recent`, `minutes://meetings/{slug}`, `minutes://ideas/recent`, `ui://minutes/dashboard`
 
 **Interactive dashboard (Claude Desktop):** 5 tools render an inline interactive UI via [MCP Apps](https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/apps) — meeting list with filter/search, detail view with fullscreen + "Send to Claude" context injection, person profiles, consistency reports. Text-only clients see the same data as plain text.
 
@@ -566,7 +566,7 @@ minutes/
 ├── crates/core/    17 Rust modules — the engine (shared by all interfaces)
 ├── crates/cli/     CLI binary — 15 commands
 ├── crates/reader/  Lightweight read-only meeting parser (no audio deps)
-├── crates/mcp/     MCP server — 13 tools + 6 resources + interactive dashboard
+├── crates/mcp/     MCP server — 10 tools + 7 resources + interactive dashboard
 │   └── ui/         MCP App dashboard (vanilla TS → single-file HTML)
 ├── tauri/          Menu bar app — system tray, recording UI, singleton AI Assistant
 └── .claude/plugins/minutes/   Claude Code plugin — 12 skills + 1 agent + 2 hooks

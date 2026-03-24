@@ -110,7 +110,7 @@ export default function Home() {
             {
               icon: "cpu",
               title: "AI agents",
-              desc: "13 MCP tools. 7 resources. Structured intents in YAML. Decision consistency tracking. People profiles. Any agent that speaks MCP can use Minutes as its memory layer.",
+              desc: "10 MCP tools. 7 resources. Structured intents in YAML. Decision consistency tracking. People profiles. Any agent that speaks MCP can use Minutes as its memory layer.",
             },
           ].map((card) => (
             <div
@@ -148,7 +148,7 @@ export default function Home() {
             ["Cross-meeting intelligence", "Search across all meetings. Build people profiles from every conversation."],
             ["Voice memo pipeline", "iPhone Voice Memos → iCloud → auto-transcribe on Mac. Ideas while walking, searchable by afternoon."],
             ["Desktop app", "Tauri v2 menu bar app. One-click recording, dictation hotkey, calendar integration. macOS and Windows."],
-            ["Claude-native", "13 MCP tools for Claude Desktop, Cowork, Dispatch. Claude Code plugin with 12 skills. No API keys."],
+            ["Claude-native", "10 MCP tools for Claude Desktop, Cowork, Dispatch. Claude Code plugin with 12 skills. No API keys."],
             ["Any LLM", "Ollama for local. OpenAI if you prefer. Or skip summarization — the transcript is the artifact."],
             ["Markdown is the truth", "Every meeting saves as markdown with YAML frontmatter. Works with Obsidian, grep, QMD, or anything."],
           ].map(([title, desc]) => (
@@ -181,7 +181,7 @@ export default function Home() {
                 ["Local transcription", "No", "No", "Yes", "Yes"],
                 ["Open source", "No", "No", "Yes", "MIT"],
                 ["Free", "$18/mo", "Freemium", "Free", "Free"],
-                ["AI agent integration", "No", "No", "No", "13 MCP tools"],
+                ["AI agent integration", "No", "No", "No", "10 MCP tools"],
                 ["Cross-meeting intelligence", "No", "No", "No", "Yes"],
                 ["Dictation mode", "No", "No", "No", "Yes"],
                 ["Voice memos", "No", "No", "No", "iPhone pipeline"],

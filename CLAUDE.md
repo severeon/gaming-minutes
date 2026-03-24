@@ -147,8 +147,7 @@ minutes/
 │   │   └── error.rs           # Per-module error types (thiserror)
 │   ├── cli/                   # CLI binary — 15 commands
 │   ├── reader/                # Lightweight read-only meeting parser (no audio deps)
-│   └── mcp/                   # MCP server — 13 tools + 7 resources + MCP App dashboard
-│       ├── src/reader.ts      # Pure-TS meeting file reader (npx fallback, SDK foundation)
+│   └── mcp/                   # MCP server — 10 tools + 7 resources + MCP App dashboard
 │       └── ui/                # Interactive dashboard (vanilla TS, builds to single-file HTML)
 ├── tauri/                     # Tauri v2 menu bar app + singleton AI Assistant
 ├── .claude/plugins/minutes/   # Claude Code plugin — 12 skills + 1 agent + 2 hooks
@@ -209,14 +208,14 @@ node test/mcp_tools_test.mjs                        # 8 MCP integration tests
 - 90 unit tests (all core modules including screen, calendar, config, watch cross-device, streaming whisper)
 - 8 integration tests (pipeline, permissions, collisions, search filters)
 - 2 real whisper tests (transcription + no-speech detection with tiny model)
-- 30 reader.ts unit tests (vitest — frontmatter parsing, listing, search, actions, profiles)
+- 30 reader.ts unit tests (vitest — frontmatter parsing, listing, search, actions, profiles; reader lives in crates/sdk/src/reader.ts)
 - 8 MCP integration tests (CLI JSON output, TypeScript compilation)
 - 4 hook unit tests (post-record hook: routing, edge cases, error handling)
 - 1 screen context test (screenshot listing and sorting)
 
 ## Claude Ecosystem Integration
 
-- **MCP Server**: 13 tools + 7 resources for Claude Desktop / Cowork / Dispatch (`npx minutes-mcp` for zero-install)
+- **MCP Server**: 10 tools + 7 resources for Claude Desktop / Cowork / Dispatch (`npx minutes-mcp` for zero-install)
 - **Claude Code Plugin**: 12 skills (8 core + 3 interactive lifecycle + 1 ghost context) + meeting-analyst agent + PostToolUse hook
 - **Interactive meeting lifecycle**: `/minutes prep` → record → `/minutes debrief` → `/minutes weekly` with skill chaining via `.prep.md` files
 - **Conversational summarization**: Claude reads transcripts via MCP, no API key needed

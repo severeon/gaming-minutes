@@ -86,15 +86,13 @@ current app identity can start the macOS `CGEventTap` monitor used by the
 dictation hotkey:
 
 ```bash
-~/Applications/Minutes\ Dev.app/Contents/MacOS/minutes-app --diagnose-hotkey
+./scripts/diagnose-desktop-hotkey.sh "$HOME/Applications/Minutes Dev.app"
 ```
 
 Optional keycode override:
 
 ```bash
-~/Applications/Minutes\ Dev.app/Contents/MacOS/minutes-app \
-  --diagnose-hotkey \
-  --diagnose-hotkey-keycode 63
+./scripts/diagnose-desktop-hotkey.sh "$HOME/Applications/Minutes Dev.app" 63
 ```
 
 Interpretation:
@@ -104,6 +102,14 @@ Interpretation:
 
 This diagnostic is the fastest way to answer "can this exact app identity
 create the native hotkey?" without going through the UI.
+
+Important:
+
+- the helper launches the app via LaunchServices using `open -a`
+- do not invoke `Contents/MacOS/minutes-app --diagnose-hotkey` directly from
+  the shell for TCC debugging
+- direct shell execution can produce a false negative even when the same app
+  succeeds when launched normally as an app
 
 ## Permission map
 

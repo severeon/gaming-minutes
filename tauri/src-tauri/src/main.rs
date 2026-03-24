@@ -21,6 +21,7 @@ fn maybe_run_hotkey_diagnostic() -> Option<i32> {
     }
 
     let mut keycode = minutes_core::hotkey_macos::KEYCODE_CAPS_LOCK;
+    let mut output_path: Option<std::path::PathBuf> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--diagnose-hotkey-keycode" {
@@ -29,10 +30,16 @@ fn maybe_run_hotkey_diagnostic() -> Option<i32> {
                     keycode = parsed;
                 }
             }
+        } else if arg == "--diagnose-hotkey-output" {
+            if let Some(value) = iter.next() {
+                output_path = Some(std::path::PathBuf::from(value));
+            }
         } else if let Some(value) = arg.strip_prefix("--diagnose-hotkey-keycode=") {
             if let Ok(parsed) = value.parse::<i64>() {
                 keycode = parsed;
             }
+        } else if let Some(value) = arg.strip_prefix("--diagnose-hotkey-output=") {
+            output_path = Some(std::path::PathBuf::from(value));
         }
     }
 
@@ -56,7 +63,21 @@ fn maybe_run_hotkey_diagnostic() -> Option<i32> {
     });
 
     match serde_json::to_string_pretty(&payload) {
-        Ok(json) => println!("{}", json),
+        Ok(json) => {
+            if let Some(path) = output_path {
+                if let Some(parent) = path.parent() {
+                    if let Err(error) = std::fs::create_dir_all(parent) {
+                        eprintln!("failed to create diagnostic output directory: {}", error);
+                        return Some(1);
+                    }
+                }
+                if let Err(error) = std::fs::write(&path, &json) {
+                    eprintln!("failed to write hotkey diagnostic: {}", error);
+                    return Some(1);
+                }
+            }
+            println!("{}", json);
+        }
         Err(error) => {
             eprintln!("failed to encode hotkey diagnostic: {}", error);
             return Some(1);

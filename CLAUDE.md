@@ -77,7 +77,7 @@ Those identities are not stable enough for TCC debugging.
 Native hotkey sanity check:
 
 ```bash
-~/Applications/Minutes\ Dev.app/Contents/MacOS/minutes-app --diagnose-hotkey
+./scripts/diagnose-desktop-hotkey.sh "$HOME/Applications/Minutes Dev.app"
 ```
 
 See [docs/DESKTOP-DEVELOPMENT.md](/Users/silverbook/Sites/minutes/docs/DESKTOP-DEVELOPMENT.md) for the full workflow.

@@ -503,10 +503,10 @@ whisper.cpp needs the SDK include path. Set `CXXFLAGS` as shown above before bui
 The native hotkey uses macOS Input Monitoring, which is separate from Screen Recording. The fastest way to test the exact installed desktop identity is:
 
 ```bash
-~/Applications/Minutes\ Dev.app/Contents/MacOS/minutes-app --diagnose-hotkey
+./scripts/diagnose-desktop-hotkey.sh "$HOME/Applications/Minutes Dev.app"
 ```
 
-Use `./scripts/install-dev-app.sh` first so you are testing the stable development app identity rather than a raw `target/` build.
+Use `./scripts/install-dev-app.sh` first so you are testing the stable development app identity rather than a raw `target/` build. The helper intentionally launches the app through LaunchServices; direct shell execution of `Contents/MacOS/minutes-app --diagnose-hotkey` can misreport TCC status.
 
 ## Configuration
 

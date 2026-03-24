@@ -76,7 +76,7 @@ cp -rf "$BUILD_APP" "$INSTALL_APP"
 
 echo "=== Running native hotkey diagnostic from installed dev app ==="
 set +e
-"${INSTALL_APP}/Contents/MacOS/minutes-app" --diagnose-hotkey
+./scripts/diagnose-desktop-hotkey.sh "$INSTALL_APP"
 DIAG_EXIT=$?
 set -e
 

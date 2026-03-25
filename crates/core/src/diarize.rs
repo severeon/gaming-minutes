@@ -3,19 +3,18 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 // ──────────────────────────────────────────────────────────────
-// Speaker diarization via subprocess.
+// Speaker diarization.
 //
 // Engines:
-//   "pyannote"   → Python pyannote.audio (best quality, needs Python)
-//   "none"       → Skip diarization (default)
+//   "pyannote-rs" → Native Rust via pyannote-rs crate (recommended)
+//   "pyannote"    → Python pyannote.audio subprocess (legacy)
+//   "none"        → Skip diarization (default)
 //
-// Protocol:
-//   Rust spawns a Python script that runs pyannote, outputs JSON to stdout.
-//   No library linking — subprocess call is AGPL-safe.
+// The pyannote-rs engine uses ONNX models (~34 MB total):
+//   - segmentation-3.0.onnx (speech segmentation)
+//   - wespeaker_en_voxceleb_CAM++.onnx (speaker embeddings)
 //
-// Output format:
-//   [{"speaker": "SPEAKER_0", "start": 0.0, "end": 5.2},
-//    {"speaker": "SPEAKER_1", "start": 5.2, "end": 12.8}, ...]
+// Download with: minutes setup --diarization
 // ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +30,22 @@ pub struct DiarizationResult {
     pub num_speakers: usize,
 }
 
+/// Model filenames expected by pyannote-rs.
+pub const SEGMENTATION_MODEL: &str = "segmentation-3.0.onnx";
+pub const EMBEDDING_MODEL: &str = "wespeaker_en_voxceleb_CAM++.onnx";
+
+/// Download URLs for diarization models (hosted on pyannote-rs GitHub releases).
+pub const SEGMENTATION_MODEL_URL: &str =
+    "https://github.com/thewh1teagle/pyannote-rs/releases/download/v0.1.0/segmentation-3.0.onnx";
+pub const EMBEDDING_MODEL_URL: &str =
+    "https://github.com/thewh1teagle/pyannote-rs/releases/download/v0.1.0/wespeaker_en_voxceleb_CAM++.onnx";
+
+/// Check if diarization models are installed.
+pub fn models_installed(config: &Config) -> bool {
+    let dir = &config.diarization.model_path;
+    dir.join(SEGMENTATION_MODEL).exists() && dir.join(EMBEDDING_MODEL).exists()
+}
+
 /// Run speaker diarization on an audio file.
 /// Returns None if diarization is disabled.
 pub fn diarize(audio_path: &Path, config: &Config) -> Option<DiarizationResult> {
@@ -43,6 +58,13 @@ pub fn diarize(audio_path: &Path, config: &Config) -> Option<DiarizationResult> 
     tracing::info!(engine = %engine, file = %audio_path.display(), "running diarization");
 
     let result = match engine.as_str() {
+        #[cfg(feature = "diarize")]
+        "pyannote-rs" => diarize_with_pyannote_rs(audio_path, config),
+        #[cfg(not(feature = "diarize"))]
+        "pyannote-rs" => {
+            tracing::error!("pyannote-rs engine requires the 'diarize' feature. Rebuild with: cargo build --features diarize");
+            return None;
+        }
         "pyannote" => diarize_with_pyannote(audio_path),
         other => {
             tracing::warn!(engine = %other, "unknown diarization engine, skipping");
@@ -121,15 +143,175 @@ fn parse_timestamp(ts: &str) -> Option<f64> {
     }
 }
 
+// ── Native diarization via pyannote-rs ──────────────────────
+
+#[cfg(feature = "diarize")]
+fn diarize_with_pyannote_rs(
+    audio_path: &Path,
+    config: &Config,
+) -> Result<DiarizationResult, Box<dyn std::error::Error>> {
+    use pyannote_rs::{EmbeddingExtractor, EmbeddingManager};
+
+    let model_dir = &config.diarization.model_path;
+    let seg_model = model_dir.join(SEGMENTATION_MODEL);
+    let emb_model = model_dir.join(EMBEDDING_MODEL);
+
+    if !seg_model.exists() {
+        return Err(format!(
+            "Segmentation model not found at {}. Run `minutes setup --diarization` to download.",
+            seg_model.display()
+        )
+        .into());
+    }
+    if !emb_model.exists() {
+        return Err(format!(
+            "Embedding model not found at {}. Run `minutes setup --diarization` to download.",
+            emb_model.display()
+        )
+        .into());
+    }
+
+    // Load audio — pyannote-rs needs mono 16-bit PCM.
+    // Use symphonia to decode any format, then convert to i16 samples.
+    let (samples, sample_rate) = load_audio_as_i16(audio_path)?;
+
+    tracing::info!(
+        samples = samples.len(),
+        sample_rate = sample_rate,
+        "audio loaded for diarization"
+    );
+
+    // Step 1: Segment speech regions
+    let segments_iter = pyannote_rs::get_segments(&samples, sample_rate, &seg_model)?;
+
+    // Step 2: Extract speaker embeddings and cluster
+    let mut extractor = EmbeddingExtractor::new(&emb_model)?;
+    let mut manager = EmbeddingManager::new(usize::MAX);
+    let threshold = config.diarization.threshold;
+
+    let mut segments = Vec::new();
+    for segment_result in segments_iter {
+        let segment = segment_result?;
+        let embedding: Vec<f32> = extractor.compute(&segment.samples)?.collect();
+
+        let speaker_id = manager
+            .search_speaker(embedding, threshold)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "0".to_string());
+
+        segments.push(SpeakerSegment {
+            speaker: format!("SPEAKER_{}", speaker_id),
+            start: segment.start,
+            end: segment.end,
+        });
+    }
+
+    let num_speakers = segments
+        .iter()
+        .map(|s| s.speaker.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    Ok(DiarizationResult {
+        segments,
+        num_speakers,
+    })
+}
+
+/// Load audio file as mono 16-bit PCM samples using symphonia.
+/// Handles WAV, M4A, MP3, OGG, and other formats symphonia supports.
+#[cfg(feature = "diarize")]
+fn load_audio_as_i16(audio_path: &Path) -> Result<(Vec<i16>, u32), Box<dyn std::error::Error>> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let file = std::fs::File::open(audio_path)?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = audio_path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let probed = symphonia::default::get_probe().format(
+        &hint,
+        mss,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    )?;
+
+    let mut format = probed.format;
+
+    let track = format.default_track().ok_or("no audio track found")?;
+    let track_id = track.id;
+    let sample_rate = track.codec_params.sample_rate.ok_or("no sample rate")?;
+    let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(1);
+
+    let mut decoder =
+        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+
+    let mut all_samples: Vec<f32> = Vec::new();
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(symphonia::core::errors::Error::IoError(ref e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        let decoded = decoder.decode(&packet)?;
+        let spec = *decoded.spec();
+        let num_frames = decoded.capacity();
+
+        let mut sample_buf = SampleBuffer::<f32>::new(num_frames as u64, spec);
+        sample_buf.copy_interleaved_ref(decoded);
+
+        let samples = sample_buf.samples();
+
+        // Mix to mono if multi-channel
+        if channels > 1 {
+            for chunk in samples.chunks(channels) {
+                let mono: f32 = chunk.iter().sum::<f32>() / channels as f32;
+                all_samples.push(mono);
+            }
+        } else {
+            all_samples.extend_from_slice(samples);
+        }
+    }
+
+    // Convert f32 [-1.0, 1.0] to i16
+    let i16_samples: Vec<i16> = all_samples
+        .iter()
+        .map(|&s| {
+            let clamped = s.clamp(-1.0, 1.0);
+            (clamped * 32767.0) as i16
+        })
+        .collect();
+
+    Ok((i16_samples, sample_rate))
+}
+
+// ── Legacy Python subprocess diarization ────────────────────
+
 /// Run pyannote diarization via Python subprocess.
 fn diarize_with_pyannote(
     audio_path: &Path,
 ) -> Result<DiarizationResult, Box<dyn std::error::Error>> {
-    // Check if Python is available
     let python = find_python()?;
 
     // Security: pass audio path as sys.argv[1], never interpolate into source code.
-    // A crafted filename with quotes/backticks could inject arbitrary Python otherwise.
     let script = r#"
 import json, sys
 try:
@@ -259,5 +441,27 @@ mod tests {
         let config = Config::default(); // engine = "none"
         let result = diarize(Path::new("/fake.wav"), &config);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn diarize_returns_none_for_unknown_engine() {
+        let mut config = Config::default();
+        config.diarization.engine = "nonexistent".into();
+        let result = diarize(Path::new("/fake.wav"), &config);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn models_installed_returns_false_when_missing() {
+        let config = Config::default();
+        assert!(!models_installed(&config));
+    }
+
+    #[test]
+    fn config_recognizes_pyannote_rs_engine() {
+        let mut config = Config::default();
+        config.diarization.engine = "pyannote-rs".into();
+        assert_eq!(config.diarization.engine, "pyannote-rs");
+        assert_eq!(config.diarization.threshold, 0.5);
     }
 }

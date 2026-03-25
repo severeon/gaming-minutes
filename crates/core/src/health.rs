@@ -29,6 +29,8 @@ pub struct HealthItem {
 pub fn check_all(config: &Config) -> Vec<HealthItem> {
     vec![
         model_status(config),
+        vad_model_status(config),
+        diarization_status(config),
         mic_status(),
         calendar_status(),
         watcher_status(config),
@@ -58,6 +60,78 @@ pub fn model_status(config: &Config) -> HealthItem {
             )
         },
         optional: false,
+    }
+}
+
+/// Check if the Silero VAD model is downloaded (improves non-English transcription).
+pub fn vad_model_status(config: &Config) -> HealthItem {
+    let vad_model = &config.transcription.vad_model;
+    if vad_model.is_empty() {
+        return HealthItem {
+            label: "VAD model".into(),
+            state: "ready".into(),
+            detail: "Disabled (vad_model is empty). Energy-based silence detection will be used."
+                .into(),
+            optional: true,
+        };
+    }
+
+    let vad_file = config
+        .transcription
+        .model_path
+        .join(format!("ggml-{}.bin", vad_model));
+    let exists = vad_file.exists();
+
+    HealthItem {
+        label: "VAD model".into(),
+        state: if exists { "ready" } else { "attention" }.into(),
+        detail: if exists {
+            format!("Silero VAD installed at {}.", vad_file.display())
+        } else {
+            "Silero VAD not installed. Run `minutes setup` to download it. \
+             Without it, non-English audio may produce transcription loops."
+                .into()
+        },
+        optional: true,
+    }
+}
+
+/// Check if diarization models are downloaded (when diarization is enabled).
+pub fn diarization_status(config: &Config) -> HealthItem {
+    if config.diarization.engine == "none" {
+        return HealthItem {
+            label: "Speaker diarization".into(),
+            state: "ready".into(),
+            detail: "Disabled. Set `diarization.engine = \"pyannote-rs\"` in config to enable."
+                .into(),
+            optional: true,
+        };
+    }
+
+    if config.diarization.engine == "pyannote-rs" {
+        let installed = crate::diarize::models_installed(config);
+        return HealthItem {
+            label: "Speaker diarization".into(),
+            state: if installed { "ready" } else { "attention" }.into(),
+            detail: if installed {
+                format!(
+                    "pyannote-rs models installed at {}.",
+                    config.diarization.model_path.display()
+                )
+            } else {
+                "Models not downloaded. Run `minutes setup --diarization` to install (~34 MB)."
+                    .into()
+            },
+            optional: true,
+        };
+    }
+
+    // Legacy pyannote (Python) or other engines
+    HealthItem {
+        label: "Speaker diarization".into(),
+        state: "ready".into(),
+        detail: format!("Using {} engine.", config.diarization.engine),
+        optional: true,
     }
 }
 

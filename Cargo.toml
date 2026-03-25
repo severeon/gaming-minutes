@@ -62,3 +62,9 @@ symphonia = { version = "0.5", features = ["mp3", "aac", "ogg", "wav", "isomp4"]
 
 # Channels (for streaming audio)
 crossbeam-channel = "0.5"
+
+# Speaker diarization (native, no Python)
+pyannote-rs = "0.3"
+
+# SQLite (relationship graph index)
+rusqlite = { version = "0.33", features = ["bundled"] }

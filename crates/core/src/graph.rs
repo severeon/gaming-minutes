@@ -210,9 +210,17 @@ pub fn rebuild_index_at(config: &Config, path: &Path) -> Result<GraphStats, Grap
 
         let frontmatter: Frontmatter = match serde_yaml::from_str(fm_str) {
             Ok(fm) => fm,
-            Err(e) => {
-                tracing::warn!(path = %file_path.display(), error = %e, "skipping malformed frontmatter");
-                continue;
+            Err(_) => {
+                // Fallback: try parsing with lenient date handling.
+                // Many real files have dates without timezone offsets (e.g., 2026-03-17T14:00:00)
+                // which fail DateTime<Local> parsing. Try fixing the date before re-parsing.
+                match try_parse_with_fixed_date(fm_str) {
+                    Some(fm) => fm,
+                    None => {
+                        tracing::debug!(path = %file_path.display(), "skipping file with unparseable frontmatter");
+                        continue;
+                    }
+                }
             }
         };
 
@@ -686,6 +694,63 @@ fn detect_aliases(conn: &Connection) -> Result<Vec<AliasSuggestion>, GraphError>
 }
 
 // ── Helpers ───────────────────────────────────────────────────
+
+/// Fix common frontmatter issues before YAML parsing:
+/// 1. Bare ISO dates without timezone offsets (e.g., `date: 2026-03-17T14:00:00`)
+/// 2. Wikilink syntax in people field (e.g., `people: [[alex-chen], [mat]]`)
+/// 3. Non-date strings in `due` fields (e.g., `due: Friday`)
+fn fix_frontmatter(fm_str: &str) -> String {
+    let offset = Local::now().format("%:z").to_string();
+    fm_str
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            // Fix bare ISO dates
+            if trimmed.starts_with("date:") && trimmed.len() > 5 {
+                let value = trimmed[5..].trim();
+                if value.contains('T')
+                    && !value.contains('+')
+                    && !value.contains('Z')
+                    && value.chars().filter(|c| *c == '-').count() <= 2
+                {
+                    return format!("date: {}{}", value, offset);
+                }
+            }
+            // Fix wikilinks in people field:
+            // people: [[alex-chen], [mat]] → people: [alex-chen, mat]
+            if trimmed.starts_with("people:") && trimmed.contains('[') {
+                let colon_pos = line.find(':').unwrap_or(0);
+                let key = &line[..=colon_pos];
+                let value = line[colon_pos + 1..].replace('[', "").replace(']', "");
+                let items: Vec<String> = value
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                return format!("{} [{}]", key, items.join(", "));
+            }
+            // Fix non-date due fields: quote them so they parse as strings
+            if trimmed.starts_with("due:") && !trimmed.contains('"') {
+                let value = trimmed[4..].trim();
+                if !value.is_empty()
+                    && !value.starts_with('"')
+                    && !value.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                {
+                    let indent = line.len() - line.trim_start().len();
+                    return format!("{}due: \"{}\"", " ".repeat(indent), value);
+                }
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Try parsing frontmatter with fixes applied for real-world format issues.
+fn try_parse_with_fixed_date(fm_str: &str) -> Option<Frontmatter> {
+    let fixed = fix_frontmatter(fm_str);
+    serde_yaml::from_str(&fixed).ok()
+}
 
 /// Slugify a name: "Sarah Chen" -> "sarah-chen"
 fn slugify(name: &str) -> String {

@@ -83,9 +83,10 @@ export default function Home() {
       <section className="py-14 border-t border-white/[0.06]">
         <h2 className="text-2xl font-semibold mb-6 tracking-[-0.03em]">How it works</h2>
         <pre className="font-mono text-[13px] leading-relaxed text-[#a1a1a1] bg-[#0a0a0a] border border-white/[0.06] rounded-lg p-5 overflow-x-auto mb-4">
-{`Audio  →  Transcribe  →  Summarize  →  Structured Markdown
-          (local)        (your LLM)     (decisions, action items,
-         whisper.cpp    Claude / Ollama   people, entities)`}
+{`Audio → Transcribe → Diarize → Summarize → Markdown → Relationship Graph
+        (local)      (local)    (your LLM)  (decisions,  (people, commitments,
+       whisper.cpp  pyannote   Claude /      action items) topics, scores)
+                               Ollama`}
         </pre>
         <p className="text-sm text-[#a1a1a1] leading-relaxed">
           Your audio never leaves your machine. Transcription is local via whisper.cpp with GPU acceleration. Summarization is optional — Claude does it conversationally when you ask, using your existing subscription. No API keys needed.
@@ -100,7 +101,7 @@ export default function Home() {
             {
               icon: "cpu",
               title: "AI agents",
-              desc: "10 MCP tools. 7 resources. Structured intents in YAML. Decision consistency tracking. People profiles. Any agent that speaks MCP can use Minutes as its memory layer.",
+              desc: "15 MCP tools. 7 resources. Relationship graph. Commitment tracking. \"What did I promise Sarah?\" just works. Any agent that speaks MCP can use Minutes as its memory layer.",
             },
             {
               icon: "terminal",
@@ -145,10 +146,11 @@ export default function Home() {
             ["Dictation mode", "Hold a hotkey, speak, release. Text goes to clipboard and daily note. Menu bar app or CLI."],
             ["Speaker diarization", "pyannote separates \"who said what\" in multi-person meetings."],
             ["Structured extraction", "Action items, decisions, and commitments as queryable YAML, not buried in prose."],
+            ["Relationship intelligence", "\"What did I promise Sarah?\" Track people, commitments, topics across meetings. Losing-touch alerts. Your AI remembers every relationship."],
             ["Cross-meeting intelligence", "Search across all meetings. Build people profiles from every conversation."],
             ["Voice memo pipeline", "iPhone Voice Memos → iCloud → auto-transcribe on Mac. Ideas while walking, searchable by afternoon."],
             ["Desktop app", "Tauri v2 menu bar app. One-click recording, dictation hotkey, calendar integration. macOS today, Windows in progress."],
-            ["Claude-native", "10 MCP tools for Claude Desktop, Cowork, Dispatch. Claude Code plugin with 12 skills. No API keys."],
+            ["Claude-native", "15 MCP tools for Claude Desktop, Cowork, Dispatch. Claude Code plugin with 12 skills. No API keys."],
             ["Any LLM", "Ollama for local. OpenAI if you prefer. Or skip summarization — the transcript is the artifact."],
             ["Markdown is the truth", "Every meeting saves as markdown with YAML frontmatter. Works with Obsidian, grep, QMD, or anything."],
           ].map(([title, desc]) => (

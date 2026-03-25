@@ -8,7 +8,7 @@
 
 Agents have run logs. Humans have conversations. **minutes** captures the human side — the decisions, the intent, the context that agents need but can't observe — and makes it queryable.
 
-Record a meeting. Capture a voice memo on a walk. Ask Claude what was decided three weeks ago. It just works.
+Record a meeting. Capture a voice memo on a walk. Ask Claude *"what did I promise Sarah?"* — and get an answer. Your AI remembers every conversation you've had.
 
 <p align="center">
   <img src="docs/assets/demo.gif" alt="minutes demo — record, dictate, phone sync, AI recall" width="750">
@@ -52,14 +52,14 @@ minutes stop                  # Stop and transcribe
 ## How it works
 
 ```
-Audio → Transcribe → Summarize → Detect Attendees → Structured Markdown
-         (local)       (LLM)      (calendar +          (decisions,
-        whisper.cpp   Claude/      transcript)          action items,
-                      Ollama/                           people, entities)
-                      OpenAI
+Audio → Transcribe → Diarize → Summarize → Structured Markdown → Relationship Graph
+         (local)     (local)     (LLM)       (decisions,            (people, commitments,
+        whisper.cpp  pyannote   Claude/       action items,          topics, scores)
+                                Ollama/       people, entities)      SQLite index
+                                OpenAI
 ```
 
-Everything runs locally. Your audio never leaves your machine (unless you opt into cloud LLM summarization). Attendees are automatically detected from macOS Calendar events and participant extraction from the transcript.
+Everything runs locally. Your audio never leaves your machine (unless you opt into cloud LLM summarization). Speakers are identified via native diarization. The relationship graph indexes people, commitments, and topics across all meetings for instant queries.
 
 ## Features
 
@@ -90,6 +90,19 @@ minutes actions                                   # Open action items across all
 minutes actions --assignee sarah                   # Filter by person
 minutes list                                      # Recent recordings
 ```
+
+### Relationship intelligence
+
+> *"What did I promise Sarah?"* — the query nobody else can answer.
+
+```bash
+minutes people                                     # Who you talk to, how often, about what
+minutes people --rebuild                           # Rebuild the relationship index
+minutes commitments                                # All open + overdue commitments
+minutes commitments --person alex                   # What did I promise Alex?
+```
+
+Tracks people, commitments, topics, and relationship health across every meeting. Detects when you're losing touch with someone. Suggests duplicate contacts ("Sarah Chen" ↔ "Sarah"). Powered by a SQLite index rebuilt from your markdown in <50ms.
 
 ### Cross-meeting intelligence
 ```bash
@@ -319,11 +332,11 @@ Minutes exposes a standard MCP server. Point any MCP-compatible client at it:
 }
 ```
 
-**10 tools:** `start_recording`, `stop_recording`, `get_status`, `research_topic`, `process_audio`, `add_note`, `qmd_collection_status`, `register_qmd_collection`, `start_dictation`, `stop_dictation`
+**15 tools:** `start_recording`, `stop_recording`, `get_status`, `search_meetings`, `list_meetings`, `get_meeting`, `get_person_profile`, `track_commitments`, `relationship_map`, `research_topic`, `process_audio`, `add_note`, `consistency_report`, `qmd_collection_status`, `register_qmd_collection`
 
 **7 resources:** `minutes://meetings/recent`, `minutes://status`, `minutes://actions/open`, `minutes://events/recent`, `minutes://meetings/{slug}`, `minutes://ideas/recent`, `ui://minutes/dashboard`
 
-**Interactive dashboard (Claude Desktop):** 5 tools render an inline interactive UI via [MCP Apps](https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/apps) — meeting list with filter/search, detail view with fullscreen + "Send to Claude" context injection, person profiles, consistency reports. Text-only clients see the same data as plain text.
+**Interactive dashboard (Claude Desktop):** Tools render an inline interactive UI via [MCP Apps](https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/apps) — meeting list with filter/search, detail view with fullscreen + "Send to Claude" context injection, **People tab** with relationship cards and click-through profiles, consistency reports. Text-only clients see the same data as plain text.
 
 ### Claude Code (Plugin)
 
@@ -582,7 +595,7 @@ minutes/
 ├── crates/core/    17 Rust modules — the engine (shared by all interfaces)
 ├── crates/cli/     CLI binary — 15 commands
 ├── crates/reader/  Lightweight read-only meeting parser (no audio deps)
-├── crates/mcp/     MCP server — 10 tools + 7 resources + interactive dashboard
+├── crates/mcp/     MCP server — 15 tools + 7 resources + interactive dashboard
 │   └── ui/         MCP App dashboard (vanilla TS → single-file HTML)
 ├── tauri/          Menu bar app — system tray, recording UI, singleton AI Assistant
 └── .claude/plugins/minutes/   Claude Code plugin — 12 skills + 1 agent + 2 hooks

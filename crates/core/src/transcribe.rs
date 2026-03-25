@@ -88,15 +88,9 @@ fn transcribe_with_whisper(
         .create_state()
         .map_err(|e| TranscribeError::TranscriptionFailed(format!("create state: {}", e)))?;
 
-    let mut params =
-        whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
-
+    let mut params = default_whisper_params();
     params.set_n_threads(num_cpus());
     params.set_language(config.transcription.language.as_deref());
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
     params.set_token_timestamps(true);
 
     state
@@ -426,6 +420,63 @@ fn resolve_model_path(config: &Config) -> Result<PathBuf, TranscribeError> {
         model_name,
         model_dir.display(),
     )))
+}
+
+/// Build whisper FullParams with sane defaults matching whisper.cpp CLI.
+///
+/// The whisper.cpp CLI uses `best_of=5`, entropy/logprob thresholds, and
+/// temperature fallback to prevent decoder loops on non-English or noisy
+/// audio. Without these, `Greedy { best_of: 1 }` can repeat gibberish
+/// indefinitely (see GitHub issue #21).
+///
+/// Use this for batch transcription. For latency-sensitive streaming,
+/// use [`streaming_whisper_params`] instead.
+#[cfg(feature = "whisper")]
+pub fn default_whisper_params<'a, 'b>() -> whisper_rs::FullParams<'a, 'b> {
+    let mut params =
+        whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 5 });
+
+    // Match whisper.cpp CLI defaults for stable decoding
+    params.set_temperature(0.0);
+    params.set_temperature_inc(0.2); // retry at higher temp on high-entropy segments
+    params.set_entropy_thold(2.4); // flag segments with entropy above this
+    params.set_logprob_thold(-1.0); // flag segments with avg logprob below this
+    params.set_no_speech_thold(0.6); // probability threshold for silence detection
+    params.set_suppress_blank(true); // suppress blank/repeated token hallucinations
+
+    // Suppress noisy output
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+
+    params
+}
+
+/// Lighter whisper params for streaming/dictation where latency matters.
+///
+/// Keeps `best_of=1` and disables temperature fallback to stay within
+/// the ~200ms (base) / ~500ms (small) budget for partial transcription.
+/// Still sets entropy/logprob/no-speech thresholds and suppress_blank
+/// to catch the worst hallucinations without the 5x cost of best_of=5.
+#[cfg(feature = "whisper")]
+pub fn streaming_whisper_params<'a, 'b>() -> whisper_rs::FullParams<'a, 'b> {
+    let mut params =
+        whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
+
+    params.set_temperature(0.0);
+    params.set_temperature_inc(0.0); // no retry — latency budget too tight
+    params.set_entropy_thold(2.4);
+    params.set_logprob_thold(-1.0);
+    params.set_no_speech_thold(0.6);
+    params.set_suppress_blank(true);
+
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+
+    params
 }
 
 /// Get number of CPU threads to use for whisper.

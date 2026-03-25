@@ -1,4 +1,5 @@
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
+use crate::transcribe::streaming_whisper_params;
+use whisper_rs::WhisperContext;
 
 // ──────────────────────────────────────────────────────────────
 // Streaming whisper transcription — progressive text output.
@@ -135,13 +136,9 @@ impl StreamingWhisper {
             ctx.create_state().ok()?
         };
 
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        let mut params = streaming_whisper_params();
         params.set_n_threads(self.n_threads);
         params.set_language(self.language.as_deref());
-        params.set_print_special(false);
-        params.set_print_progress(false);
-        params.set_print_realtime(false);
-        params.set_print_timestamps(false);
 
         let start = std::time::Instant::now();
 

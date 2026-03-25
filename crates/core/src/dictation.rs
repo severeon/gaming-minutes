@@ -429,14 +429,9 @@ fn process_utterance(
 ) -> Option<DictationResult> {
     let mut state = ctx.create_state().ok()?;
 
-    let mut params =
-        whisper_rs::FullParams::new(whisper_rs::SamplingStrategy::Greedy { best_of: 1 });
+    let mut params = crate::transcribe::default_whisper_params();
     params.set_n_threads(num_cpus());
     params.set_language(config.transcription.language.as_deref());
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
 
     if let Err(e) = state.full(params, samples) {
         tracing::error!("whisper transcription failed: {}", e);

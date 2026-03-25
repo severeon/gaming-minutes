@@ -118,6 +118,41 @@ pub fn models_installed(config: &Config) -> bool {
     dir.join(SEGMENTATION_MODEL).exists() && dir.join(EMBEDDING_MODEL).exists()
 }
 
+/// Pre-process audio to 16kHz mono WAV via ffmpeg (if available).
+/// Returns (effective_path, temp_path_to_cleanup).
+/// pyannote-rs works best with 16kHz mono s16 WAV. Live recordings from cpal
+/// are often 44.1kHz F32, which the symphonia fallback can struggle with.
+fn preprocess_audio(audio_path: &Path) -> (std::path::PathBuf, Option<std::path::PathBuf>) {
+    let temp_path = std::env::temp_dir().join("minutes-diarize-preprocessed.wav");
+
+    match std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-i",
+            audio_path.to_str().unwrap_or(""),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-sample_fmt",
+            "s16",
+            temp_path.to_str().unwrap_or(""),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(status) if status.success() => {
+            tracing::info!("audio preprocessed to 16kHz mono via ffmpeg");
+            (temp_path.clone(), Some(temp_path))
+        }
+        _ => {
+            tracing::debug!("ffmpeg not available for preprocessing, using original audio");
+            (audio_path.to_path_buf(), None)
+        }
+    }
+}
+
 /// Run speaker diarization on an audio file.
 /// Returns None if diarization is disabled or models are not available.
 ///
@@ -148,20 +183,30 @@ pub fn diarize(audio_path: &Path, config: &Config) -> Option<DiarizationResult> 
 
     tracing::info!(engine = %resolved_engine, file = %audio_path.display(), "running diarization");
 
+    // Pre-process: resample to 16kHz mono via ffmpeg if available.
+    // pyannote-rs/symphonia can struggle with 44.1kHz F32 WAVs from live capture.
+    // This matches how transcribe.rs preprocesses audio for whisper.
+    let (effective_path, _temp_file) = preprocess_audio(audio_path);
+
     let result = match resolved_engine {
         #[cfg(feature = "diarize")]
-        "pyannote-rs" => diarize_with_pyannote_rs(audio_path, config),
+        "pyannote-rs" => diarize_with_pyannote_rs(&effective_path, config),
         #[cfg(not(feature = "diarize"))]
         "pyannote-rs" => {
             tracing::error!("pyannote-rs engine requires the 'diarize' feature. Rebuild with: cargo build --features diarize");
             return None;
         }
-        "pyannote" => diarize_with_pyannote(audio_path),
+        "pyannote" => diarize_with_pyannote(&effective_path),
         other => {
             tracing::warn!(engine = %other, "unknown diarization engine, skipping");
             return None;
         }
     };
+
+    // Clean up preprocessed temp file
+    if let Some(ref temp) = _temp_file {
+        std::fs::remove_file(temp).ok();
+    }
 
     match result {
         Ok(result) => {

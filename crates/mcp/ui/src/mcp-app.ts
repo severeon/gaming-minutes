@@ -636,6 +636,18 @@ function renderPeopleMap(people: any[]) {
     });
   });
 
+  // Empty state
+  if (people.length === 0) {
+    setInner($("people-grid"), `<div class="empty-state">No people found. Record some meetings, then click People again.</div>`);
+  }
+
+  // Back button → return to dashboard
+  $("people-back-btn").onclick = () => {
+    if (cachedDashboardData) {
+      renderDashboard(cachedDashboardData);
+    }
+  };
+
   showView("people-map");
 }
 

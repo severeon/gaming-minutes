@@ -383,28 +383,8 @@ fn main() -> Result<()> {
             rebuild,
             json,
             limit,
-        } => {
-            #[cfg(feature = "diarize")]
-            {
-                cmd_people(rebuild, json, limit, &config)
-            }
-            #[cfg(not(feature = "diarize"))]
-            {
-                let _ = (rebuild, json, limit);
-                anyhow::bail!("The `people` command requires the diarize feature. Rebuild with: cargo install --path crates/cli")
-            }
-        }
-        Commands::Commitments { person, json } => {
-            #[cfg(feature = "diarize")]
-            {
-                cmd_commitments(person.as_deref(), json, &config)
-            }
-            #[cfg(not(feature = "diarize"))]
-            {
-                let _ = (person, json);
-                anyhow::bail!("The `commitments` command requires the diarize feature. Rebuild with: cargo install --path crates/cli")
-            }
-        }
+        } => cmd_people(rebuild, json, limit, &config),
+        Commands::Commitments { person, json } => cmd_commitments(person.as_deref(), json, &config),
         Commands::Research {
             query,
             content_type,
@@ -1002,7 +982,6 @@ fn cmd_person(name: &str, config: &Config) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "diarize")]
 fn cmd_people(rebuild: bool, json: bool, limit: usize, config: &Config) -> Result<()> {
     use minutes_core::graph;
 
@@ -1025,7 +1004,9 @@ fn cmd_people(rebuild: bool, json: bool, limit: usize, config: &Config) -> Resul
         eprintln!();
     }
 
-    let people = graph::relationship_map(config).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let all_people = graph::relationship_map(config).map_err(|e| anyhow::anyhow!("{}", e))?;
+    // Apply limit to all output modes (JSON and formatted)
+    let people: Vec<_> = all_people.into_iter().take(limit).collect();
 
     if json {
         println!("{}", serde_json::to_string_pretty(&people)?);
@@ -1110,7 +1091,6 @@ fn cmd_people(rebuild: bool, json: bool, limit: usize, config: &Config) -> Resul
     Ok(())
 }
 
-#[cfg(feature = "diarize")]
 fn cmd_commitments(person: Option<&str>, json: bool, config: &Config) -> Result<()> {
     use minutes_core::graph;
 

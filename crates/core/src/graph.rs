@@ -77,10 +77,29 @@ pub struct AliasSuggestion {
 /// Database path: ~/.minutes/graph.db
 pub fn db_path() -> PathBuf {
     let base = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+        .expect("home directory must exist for graph.db")
         .join(".minutes");
     std::fs::create_dir_all(&base).ok();
     base.join("graph.db")
+}
+
+/// Set 0600 permissions on the database file (meeting data is sensitive).
+#[cfg(unix)]
+fn set_db_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if path.exists() {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).ok();
+    }
+}
+
+#[cfg(not(unix))]
+fn set_db_permissions(_path: &Path) {}
+
+/// Calculate relationship score from meeting count, recency, and topic depth.
+fn relationship_score(meeting_count: i64, days_since: f64, topic_count: usize) -> f64 {
+    let recency_weight = 1.0 / (1.0 + days_since / 30.0);
+    let topic_depth = (topic_count as f64 / 3.0).min(1.0);
+    meeting_count as f64 * recency_weight * topic_depth
 }
 
 /// Open or create the SQLite database with schema.
@@ -170,6 +189,10 @@ pub fn rebuild_index_at(config: &Config, path: &Path) -> Result<GraphStats, Grap
     }
 
     let conn = open_db(path)?;
+
+    // Wrap entire rebuild in a transaction for atomicity.
+    // If killed mid-rebuild, the old data remains intact.
+    conn.execute_batch("BEGIN IMMEDIATE")?;
 
     // Clear existing data for full rebuild
     conn.execute_batch(
@@ -419,16 +442,24 @@ pub fn rebuild_index_at(config: &Config, path: &Path) -> Result<GraphStats, Grap
         }
     }
 
-    // Mark stale commitments
+    // Mark stale commitments (only compare dates that look like ISO format, skip "Friday" etc.)
     let today = Local::now().to_rfc3339();
     conn.execute(
         "UPDATE commitments SET status = 'stale'
-         WHERE status = 'open' AND due_date IS NOT NULL AND due_date < ?1",
+         WHERE status = 'open' AND due_date IS NOT NULL
+         AND due_date GLOB '[0-9][0-9][0-9][0-9]-*'
+         AND due_date < ?1",
         params![today],
     )?;
 
     // Detect alias suggestions
     let alias_suggestions = detect_aliases(&conn)?;
+
+    // Commit the transaction — all or nothing
+    conn.execute_batch("COMMIT")?;
+
+    // Set restrictive permissions on the database file
+    set_db_permissions(path);
 
     let elapsed = start.elapsed().as_millis() as u64;
     tracing::info!(
@@ -509,9 +540,7 @@ pub fn query_person(config: &Config, name: &str) -> Result<Option<PersonSummary>
 
     // Relationship score
     let days_since = days_since_date(&last_seen);
-    let topic_depth = (top_topics.len() as f64 / 3.0).min(1.0);
-    let recency_weight = 1.0 / (1.0 + days_since / 30.0);
-    let score = meeting_count as f64 * recency_weight * topic_depth;
+    let score = relationship_score(meeting_count, days_since, top_topics.len());
     let losing_touch = meeting_count >= 3 && days_since > 21.0;
 
     Ok(Some(PersonSummary {

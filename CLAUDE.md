@@ -132,7 +132,7 @@ minutes/
 ├── crates/
 │   ├── core/src/              # 25 Rust modules — the engine
 │   │   ├── capture.rs         # Audio capture (cpal)
-│   │   ├── transcribe.rs      # Whisper.cpp + symphonia + VAD silence strip + sinc resampler
+│   │   ├── transcribe.rs      # Whisper.cpp transcription (ffmpeg preferred → symphonia fallback, Silero VAD, sinc resampler, dedup)
 │   │   ├── diarize.rs         # Speaker diarization (pyannote-rs native or pyannote subprocess)
 │   │   ├── summarize.rs       # LLM summarization (ureq HTTP client)
 │   │   ├── pipeline.rs        # Orchestrates the full flow + structured extraction
@@ -191,10 +191,12 @@ node test/mcp_tools_test.mjs                        # 8 MCP integration tests
 
 - **Rust** for the engine — single 6.7MB binary, cross-platform, fast
 - **whisper-rs** (whisper.cpp) for transcription — local, Apple Silicon optimized, params match whisper-cli defaults (best_of=5, entropy/logprob thresholds)
-- **pyannote-rs** for speaker diarization — native Rust, ONNX models (~34MB), no Python
-- **symphonia** for audio format conversion — m4a/mp3/ogg → WAV, pure Rust
-- **VAD silence stripping** before transcription — prevents whisper hallucination loops on non-English/noisy audio
-- **Windowed-sinc resampler** (32-tap Hann) — replaces linear interp for alias-free 44100→16000 downsampling
+- **ffmpeg preferred for audio decoding** — shells out to ffmpeg for m4a/mp3/ogg when available (identical to whisper-cli's pipeline). Falls back to symphonia (pure Rust) when ffmpeg isn't installed. This matters for non-English audio — symphonia's AAC decoder produces subtly different samples that trigger whisper hallucination loops (issue #21).
+- **Silero VAD** (via whisper-rs) — ML-based voice activity detection integrated directly into whisper's transcription params. Prevents hallucination loops by skipping silence segments. Auto-downloaded during `minutes setup`.
+- **Post-transcription safety nets** — no_speech probability filtering (>80% = skip) + repetition detection (3+ consecutive similar segments collapsed). Catches any loops that slip through VAD.
+- **pyannote-rs** for speaker diarization — native Rust, ONNX models (~34MB), no Python. Works in CLI, Tauri desktop app, and via MCP. Behind the `diarize` Cargo feature flag.
+- **symphonia** for audio format conversion — m4a/mp3/ogg → WAV, pure Rust (fallback when ffmpeg unavailable)
+- **Windowed-sinc resampler** (32-tap Hann) — alias-free 44100→16000 downsampling for WAV inputs
 - **ureq** for HTTP — pure Rust, no secrets in process args (replaced curl)
 - **fs2 flock** for PID files — atomic check-and-write, prevents TOCTOU races
 - **Tauri v2** for desktop app — shares `minutes-core` with CLI, ~10MB
@@ -204,7 +206,7 @@ node test/mcp_tools_test.mjs                        # 8 MCP integration tests
 
 ## Key Patterns
 
-- All audio processing is local (whisper.cpp + pyannote-rs)
+- All audio processing is local (whisper.cpp + pyannote-rs + Silero VAD). ffmpeg recommended but optional.
 - Claude summarizes via MCP when the user asks (no API key needed)
 - Optional automated summarization via Ollama (local) or cloud LLMs
 - Config at `~/.config/minutes/config.toml` (optional, compiled defaults work)

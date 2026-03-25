@@ -212,7 +212,7 @@ crates/cli/src/
 - **Simple pipeline function** — `pipeline::process()` calls each step with if-guards for optional steps (diarize, summarize). No trait-based step abstraction. Explicit > clever.
 - **Per-module error enums** — `CaptureError`, `TranscribeError`, `WatchError`, etc. unified at crate level via `MinutesError` with `#[from]` conversions. CLI matches for user-facing messages.
 - **Config::default()** — compiled-in defaults, config file optional. `minutes record` works without a config file if BlackHole is installed and model is downloaded.
-- **Audio format conversion** — `symphonia` crate decodes m4a/mp3/ogg to WAV in-process before transcription. No ffmpeg dependency.
+- **Audio format conversion** — prefers `ffmpeg` when available (matches whisper-cli's pipeline, critical for non-English audio). Falls back to `symphonia` (pure Rust, in-process) when ffmpeg isn't installed. Silero VAD + post-transcription dedup provide additional protection against hallucination loops.
 
 ---
 

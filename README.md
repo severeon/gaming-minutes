@@ -277,7 +277,7 @@ If your phone workflow also saves a `.json` file alongside the audio (same name,
 
 This adds `device` and `captured_at` to the meeting's frontmatter. Works with any automation tool (Apple Shortcuts, Tasker, etc.).
 
-Supports `.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`. Format conversion is automatic via [symphonia](https://github.com/pdeljanov/Symphonia).
+Supports `.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`. Format conversion is automatic — uses [ffmpeg](https://ffmpeg.org/) when available (recommended for non-English audio), falls back to [symphonia](https://github.com/pdeljanov/Symphonia).
 
 ### Vault sync (Obsidian / Logseq)
 
@@ -438,17 +438,23 @@ cargo install --path crates/cli --features coreml
 ### Setup (all platforms)
 
 ```bash
-# Download whisper model
+# Download whisper model (also downloads Silero VAD model for non-English audio)
 minutes setup --model tiny    # Quick start (75MB, fast, less accurate)
 minutes setup --model small   # Recommended (466MB, good accuracy)
 minutes setup --model base    # Middle ground (141MB)
 
-# Enable speaker diarization (optional, ~34MB)
+# Install ffmpeg for best transcription quality (strongly recommended for non-English audio)
+brew install ffmpeg           # macOS
+# apt install ffmpeg          # Linux
+# Without ffmpeg, symphonia handles m4a/mp3 decoding — works for English but may
+# produce loops on non-English audio. ffmpeg is optional but recommended.
+
+# Enable speaker diarization (optional, ~34MB ONNX models)
 minutes setup --diarization
 # Then set engine in config: diarization.engine = "pyannote-rs"
 ```
 
-> **Platform notes:** Calendar integration (auto-detecting meeting attendees) requires macOS. Screen context capture works on macOS and Linux. The voice memo pipeline works on all platforms — any folder sync (iCloud, Dropbox, Google Drive, Syncthing) can feed the watcher. The `minutes service install` auto-start command requires macOS (launchd); on Linux, use systemd or cron. All other features — recording, transcription, search, action items, person profiles — work on all platforms.
+> **Platform notes:** Calendar integration (auto-detecting meeting attendees) requires macOS. Screen context capture works on macOS and Linux. The voice memo pipeline works on all platforms — any folder sync (iCloud, Dropbox, Google Drive, Syncthing) can feed the watcher. The `minutes service install` auto-start command requires macOS (launchd); on Linux, use systemd or cron. Speaker diarization (`pyannote-rs`) works on all platforms (CLI, Tauri app, and via MCP). All other features — recording, transcription, search, action items, person profiles — work on all platforms.
 
 ### Desktop app
 
@@ -540,8 +546,12 @@ agent_command = "claude"  # Which CLI to use when engine = "agent" (claude, code
 ollama_url = "http://localhost:11434"
 ollama_model = "llama3.2"
 
+[transcription]
+# vad_model = "silero-v6.2.0" # Silero VAD model (auto-downloaded by setup). Empty = disable.
+                              # Prevents whisper hallucination loops on non-English/noisy audio.
+
 [diarization]
-engine = "none"           # "none" (default), "pyannote-rs" (recommended — native, no Python),
+engine = "none"           # "none" (default), "pyannote-rs" (recommended — native Rust, no Python),
                           # or "pyannote" (legacy — requires pip install pyannote.audio + HuggingFace auth)
 # threshold = 0.5         # Speaker similarity threshold (0.0–1.0). Lower = fewer speakers.
 
@@ -592,7 +602,7 @@ Minutes is designed as infrastructure for AI agents. The MCP server is the prima
 
 Any agent framework that speaks MCP can use Minutes as its conversation memory layer — the agent handles the intelligence, Minutes handles the recall.
 
-**Built with:** Rust, [whisper.cpp](https://github.com/ggerganov/whisper.cpp), [symphonia](https://github.com/pdeljanov/Symphonia), [cpal](https://github.com/RustAudio/cpal), [Tauri v2](https://v2.tauri.app/), [ureq](https://github.com/algesten/ureq)
+**Built with:** Rust, [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (transcription), [pyannote-rs](https://github.com/pyannote/pyannote-rs) (speaker diarization), [Silero VAD](https://github.com/snakers4/silero-vad) (voice activity detection), [symphonia](https://github.com/pdeljanov/Symphonia) (audio decoding), [cpal](https://github.com/RustAudio/cpal) (audio capture), [Tauri v2](https://v2.tauri.app/) (desktop app), [ureq](https://github.com/algesten/ureq) (HTTP). Optional: [ffmpeg](https://ffmpeg.org/) (recommended for non-English audio decoding).
 
 ## Star History
 

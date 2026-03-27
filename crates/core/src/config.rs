@@ -58,8 +58,10 @@ pub struct TranscriptionConfig {
     pub vad_model: String,
     /// Path or name of the parakeet.cpp binary (resolved via PATH if not absolute).
     pub parakeet_binary: String,
-    /// Parakeet model type: "tdt-ctc-110m", "tdt-600m", "eou-120m", "nemotron-600m".
+    /// Parakeet model type: "tdt-ctc-110m", "tdt-600m".
     pub parakeet_model: String,
+    /// SentencePiece vocab filename (resolved under model_path/parakeet/, e.g. "vocab.txt").
+    pub parakeet_vocab: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,6 +291,7 @@ impl Default for TranscriptionConfig {
             vad_model: "silero-v6.2.0".into(),
             parakeet_binary: "parakeet".into(),
             parakeet_model: "tdt-ctc-110m".into(),
+            parakeet_vocab: "vocab.txt".into(),
         }
     }
 }
@@ -482,6 +485,7 @@ mod tests {
         assert_eq!(config.transcription.min_words, 3);
         assert_eq!(config.transcription.parakeet_binary, "parakeet");
         assert_eq!(config.transcription.parakeet_model, "tdt-ctc-110m");
+        assert_eq!(config.transcription.parakeet_vocab, "vocab.txt");
         assert_eq!(config.diarization.engine, "auto");
         assert_eq!(config.summarization.engine, "none");
         assert_eq!(config.search.engine, "builtin");

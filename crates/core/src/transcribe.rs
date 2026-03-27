@@ -32,9 +32,15 @@ use std::path::PathBuf;
 /// Both engines produce identical output format: `[M:SS] text` lines.
 pub fn transcribe(audio_path: &Path, config: &Config) -> Result<String, TranscribeError> {
     match config.transcription.engine.as_str() {
+        "whisper" => transcribe_whisper_dispatch(audio_path, config),
         "parakeet" => transcribe_parakeet_dispatch(audio_path, config),
-        // Default: whisper (also handles "whisper" and any unrecognized value)
-        _ => transcribe_whisper_dispatch(audio_path, config),
+        other => {
+            tracing::warn!(
+                engine = other,
+                "unknown transcription engine — falling back to whisper"
+            );
+            transcribe_whisper_dispatch(audio_path, config)
+        }
     }
 }
 
@@ -989,27 +995,36 @@ fn transcribe_with_parakeet(audio_path: &Path, config: &Config) -> Result<String
         return Err(TranscribeError::EmptyAudio);
     }
 
-    // Step 2: Write samples to temp WAV for parakeet CLI
-    let tmp_wav = std::env::temp_dir().join(format!("minutes-parakeet-{}.wav", std::process::id()));
-    write_wav_16k_mono(&tmp_wav, &samples)?;
+    // Step 2: Write samples to temp WAV (NamedTempFile avoids PID collisions
+    // when the watcher processes multiple files concurrently)
+    let tmp_wav = tempfile::Builder::new()
+        .prefix("minutes-parakeet-")
+        .suffix(".wav")
+        .tempfile()
+        .map_err(TranscribeError::Io)?;
+    write_wav_16k_mono(tmp_wav.path(), &samples)?;
 
-    // Step 3: Resolve model path
+    // Step 3: Resolve model and vocab paths
     let model_path = resolve_parakeet_model_path(config)?;
+    let vocab_path = resolve_parakeet_vocab_path(config)?;
 
     // Step 4: Run parakeet subprocess
+    // CLI syntax: parakeet <model.safetensors> <audio.wav> --vocab <vocab.txt> [--model type] [--timestamps] [--gpu]
     let binary = &config.transcription.parakeet_binary;
     tracing::info!(
         binary = %binary,
         model = %model_path.display(),
+        vocab = %vocab_path.display(),
         audio = %audio_path.display(),
         "starting parakeet transcription"
     );
 
     let output = Command::new(binary)
         .arg(model_path.to_str().unwrap_or(""))
-        .arg(tmp_wav.to_str().unwrap_or(""))
+        .arg(tmp_wav.path().to_str().unwrap_or(""))
+        .args(["--vocab", vocab_path.to_str().unwrap_or("")])
         .args(["--model", &config.transcription.parakeet_model])
-        .args(["--output-format", "json"])
+        .arg("--timestamps")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()
@@ -1019,12 +1034,8 @@ fn transcribe_with_parakeet(audio_path: &Path, config: &Config) -> Result<String
             } else {
                 TranscribeError::ParakeetFailed(format!("spawn error: {}", e))
             }
-        });
-
-    // Clean up temp file regardless of outcome
-    let _ = std::fs::remove_file(&tmp_wav);
-
-    let output = output?;
+        })?;
+    // tmp_wav auto-deletes on drop (NamedTempFile)
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1076,16 +1087,22 @@ struct ParakeetTimestamps {
     words: Vec<ParakeetWord>,
 }
 
-/// Parse parakeet.cpp JSON output into `[M:SS] text` lines matching whisper format.
+/// Parse parakeet.cpp output into `[M:SS] text` lines matching whisper format.
 ///
-/// Groups consecutive words into segments at natural pause boundaries (>0.5s gap
-/// between words) or every ~30 words. Applies the same dedup_segments anti-hallucination
-/// filter used by whisper.
+/// parakeet.cpp outputs text with `--timestamps` flag. Tries text parsing first
+/// (the actual output format), with JSON as a fallback for potential future versions.
+///
+/// Applies the same dedup_segments anti-hallucination filter used by whisper.
 #[cfg(feature = "parakeet")]
 fn parse_parakeet_output(raw_output: &str, config: &Config) -> Result<String, TranscribeError> {
     let raw = raw_output.trim();
 
-    // Try JSON parsing first
+    // Try text parsing first — this is what parakeet.cpp actually outputs with --timestamps
+    if let Ok(result) = parse_parakeet_text_output(raw, config) {
+        return Ok(result);
+    }
+
+    // Fallback: try JSON parsing (for potential future parakeet.cpp versions or wrappers)
     let words: Vec<ParakeetWord> = if let Ok(output) = serde_json::from_str::<ParakeetOutput>(raw) {
         match output {
             ParakeetOutput::Words(w) => w,
@@ -1100,8 +1117,9 @@ fn parse_parakeet_output(raw_output: &str, config: &Config) -> Result<String, Tr
             }
         }
     } else {
-        // Fallback: try to parse line-based output like "[0.00 - 2.50] Hello world"
-        return parse_parakeet_text_output(raw, config);
+        return Err(TranscribeError::ParakeetFailed(
+            "could not parse parakeet output as text or JSON".into(),
+        ));
     };
 
     if words.is_empty() {
@@ -1151,14 +1169,18 @@ fn parse_parakeet_output(raw_output: &str, config: &Config) -> Result<String, Tr
     }
 }
 
-/// Fallback parser for parakeet.cpp text output (line-based with timestamps).
+/// Parser for parakeet.cpp text output (line-based with timestamps).
 ///
 /// Handles output like:
 ///   `[0.00 - 2.50] Hello world`
 ///   `[2.80 - 5.10] How are you`
+///
+/// Also handles plain text lines without timestamps. Only succeeds if at least
+/// one line was parsed — returns Err to allow JSON fallback on non-text input.
 #[cfg(feature = "parakeet")]
 fn parse_parakeet_text_output(raw: &str, config: &Config) -> Result<String, TranscribeError> {
     let mut lines = Vec::new();
+    let mut has_timestamps = false;
 
     for line in raw.lines() {
         let line = line.trim();
@@ -1178,6 +1200,7 @@ fn parse_parakeet_text_output(raw: &str, config: &Config) -> Result<String, Tran
                         let secs = (start_secs % 60.0) as u64;
                         if !text.is_empty() {
                             lines.push(format!("[{}:{:02}] {}", mins, secs, text));
+                            has_timestamps = true;
                         }
                         continue;
                     }
@@ -1185,7 +1208,7 @@ fn parse_parakeet_text_output(raw: &str, config: &Config) -> Result<String, Tran
             }
         }
 
-        // Unparseable line — include as-is if non-empty
+        // Plain text line (no timestamp) — include as-is
         if !line.is_empty() {
             lines.push(format!("[0:00] {}", line));
         }
@@ -1194,6 +1217,14 @@ fn parse_parakeet_text_output(raw: &str, config: &Config) -> Result<String, Tran
     if lines.is_empty() {
         return Err(TranscribeError::EmptyTranscript(
             config.transcription.min_words,
+        ));
+    }
+
+    // If no timestamped lines were found and input looks like it could be JSON,
+    // return Err to let the JSON fallback parser try
+    if !has_timestamps && raw.trim_start().starts_with(['{', '[']) {
+        return Err(TranscribeError::ParakeetFailed(
+            "text parser found no timestamps — trying JSON fallback".into(),
         ));
     }
 
@@ -1258,6 +1289,35 @@ fn resolve_parakeet_model_path(config: &Config) -> Result<PathBuf, TranscribeErr
     Err(TranscribeError::ModelNotFound(format!(
         "Expected parakeet model \"{}\" in {}. Run: minutes setup --parakeet",
         model_name,
+        model_dir.display(),
+    )))
+}
+
+/// Resolve the parakeet SentencePiece vocab file path.
+///
+/// Looks for the vocab file in `~/.minutes/models/parakeet/` alongside the model.
+#[cfg(feature = "parakeet")]
+fn resolve_parakeet_vocab_path(config: &Config) -> Result<PathBuf, TranscribeError> {
+    let model_dir = config.transcription.model_path.join("parakeet");
+    let vocab_name = &config.transcription.parakeet_vocab;
+
+    let candidates = [model_dir.join(vocab_name), model_dir.join("vocab.txt")];
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Ok(candidate.clone());
+        }
+    }
+
+    // Try as absolute path
+    let direct = PathBuf::from(vocab_name);
+    if direct.exists() {
+        return Ok(direct);
+    }
+
+    Err(TranscribeError::ModelNotFound(format!(
+        "Expected parakeet vocab file \"{}\" in {}. Generated during model conversion.",
+        vocab_name,
         model_dir.display(),
     )))
 }
@@ -1685,18 +1745,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "parakeet")]
-    fn parse_parakeet_malformed_json() {
-        // Completely empty input should fail
+    fn parse_parakeet_empty_input() {
         let bad = "";
         let config = Config::default();
         let result = parse_parakeet_output(bad, &config);
         assert!(result.is_err(), "empty input should fail");
+    }
 
-        // Malformed JSON falls through to text parser, which captures it as-is
-        let bad = "this is not json {{{";
-        let result = parse_parakeet_output(bad, &config);
-        // Text fallback treats non-empty non-timestamp lines as [0:00] text
-        assert!(result.is_ok(), "text fallback should capture plain text");
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn parse_parakeet_plain_text_passthrough() {
+        // Non-timestamp text is captured as-is via text parser (text-first approach)
+        let text = "this is plain text output";
+        let config = Config::default();
+        let result = parse_parakeet_output(text, &config);
+        assert!(result.is_ok(), "text parser should capture plain text");
+        assert!(result.unwrap().contains("this is plain text output"));
     }
 
     #[test]

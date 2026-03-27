@@ -76,8 +76,8 @@ The pipeline is the product, not the meeting. The same transcribe → summarize 
 │  │ Folder    │──┘  │whisper.cpp│   │ pyannote /│   │ Claude /     │ │
 │  │           │     │/ parakeet │   │ sherpa-   │   │ Ollama /     │ │
 │  │ Voice     │     │(local,    │   │ onnx      │   │ OpenAI /     │ │
-│  │ Memos,    │     │ optimized)│   │ (skip for │   │ any LLM      │ │
-│  │ any .m4a/ │     │           │   │  memos)   │   │ (pluggable)  │ │
+│  │ Memos,    │     │ Apple Si  │   │ (skip for │   │ any LLM      │ │
+│  │ any .m4a/ │     │ optimized)│   │  memos)   │   │ (pluggable)  │ │
 │  │ .wav file │     │           │   │           │   │              │ │
 │  └──────────┘     └───────────┘   └───────────┘   └──────┬───────┘ │
 │                                                          │           │

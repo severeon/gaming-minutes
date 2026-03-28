@@ -353,16 +353,6 @@ args = ["minutes-mcp"]
 
 All 19 tools are available in Vibe as `minutes_*` (e.g. `minutes_start_recording`, `minutes_search_meetings`).
 
-For automated summarization using Mistral models, add to `~/.config/minutes/config.toml`:
-
-```toml
-[summarization]
-engine = "mistral"
-mistral_model = "mistral-large-latest"  # or any Mistral model
-```
-
-Set `MISTRAL_API_KEY` in your environment (or in `~/.vibe/.env`).
-
 ### Claude Code (Plugin)
 
 Install the plugin from the marketplace:
@@ -410,10 +400,10 @@ MCP tools are automatically available in Cowork. From your phone via Dispatch: *
 engine = "agent"
 agent_command = "claude"  # or "codex" for OpenAI Codex users
 
-# Or use Mistral (great with Mistral Vibe)
+# Or use Mistral API (requires MISTRAL_API_KEY)
 [summarization]
 engine = "mistral"
-mistral_model = "mistral-large-latest"  # requires MISTRAL_API_KEY
+mistral_model = "mistral-large-latest"
 
 # Or use a free local LLM
 [summarization]

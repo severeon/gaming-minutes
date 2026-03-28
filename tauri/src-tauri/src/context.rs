@@ -283,26 +283,35 @@ pub fn write_assistant_context(workspace: &Path, config: &Config) -> Result<(), 
     let claude_md_path = workspace.join("CLAUDE.md");
     let assistant_md = generate_assistant_context(config)?;
 
-    // Preserve any live transcript markers from an active session (U2).
-    // update_assistant_live_context uses these markers to inject/remove the
-    // live transcript section. If we blindly overwrite, we lose it.
-    let marker_start = "<!-- LIVE_TRANSCRIPT_START -->";
-    let marker_end = "<!-- LIVE_TRANSCRIPT_END -->";
-    let existing = std::fs::read_to_string(&claude_md_path).unwrap_or_default();
-    let live_section = if let (Some(start), Some(end)) =
-        (existing.find(marker_start), existing.find(marker_end))
-    {
-        if start < end {
-            Some(existing[start..end + marker_end.len()].to_string())
+    // Preserve live transcript markers only if a session is actually active (V3).
+    // Don't trust stale markers in the file — verify via PID.
+    let lt_pid = minutes_core::pid::live_transcript_pid_path();
+    let live_actually_active = minutes_core::pid::check_pid_file(&lt_pid)
+        .ok()
+        .flatten()
+        .is_some();
+
+    let content = if live_actually_active {
+        let marker_start = "<!-- LIVE_TRANSCRIPT_START -->";
+        let marker_end = "<!-- LIVE_TRANSCRIPT_END -->";
+        let existing = std::fs::read_to_string(&claude_md_path).unwrap_or_default();
+        let live_section = if let (Some(start), Some(end)) =
+            (existing.find(marker_start), existing.find(marker_end))
+        {
+            if start < end {
+                Some(existing[start..end + marker_end.len()].to_string())
+            } else {
+                None
+            }
         } else {
             None
-        }
-    } else {
-        None
-    };
+        };
 
-    let content = if let Some(section) = live_section {
-        format!("{}\n{}\n", assistant_md.trim_end(), section)
+        if let Some(section) = live_section {
+            format!("{}\n{}\n", assistant_md.trim_end(), section)
+        } else {
+            assistant_md.clone()
+        }
     } else {
         assistant_md
     };

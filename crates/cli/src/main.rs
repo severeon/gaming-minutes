@@ -642,6 +642,12 @@ fn cmd_record(
     config.ensure_dirs()?;
     let capture_mode = capture_mode_from_str(mode)?;
 
+    // Check for conflicting live transcript session
+    let lt_pid = minutes_core::pid::live_transcript_pid_path();
+    if let Ok(Some(_)) = minutes_core::pid::check_pid_file(&lt_pid) {
+        anyhow::bail!("live transcript in progress — run `minutes stop` first");
+    }
+
     // Check if already recording
     minutes_core::pid::create().map_err(|e| anyhow::anyhow!("{}", e))?;
     minutes_core::pid::write_recording_metadata(capture_mode).ok();

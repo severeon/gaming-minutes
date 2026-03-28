@@ -179,6 +179,12 @@ where
         return Err(DictationError::RecordingActive.into());
     }
 
+    // Check for conflicts: live transcript must not be active
+    let lt_pid = pid::live_transcript_pid_path();
+    if let Ok(Some(_)) = pid::check_pid_file(&lt_pid) {
+        return Err(DictationError::RecordingActive.into());
+    }
+
     // Check for conflicts: another dictation must not be active
     let dict_pid = pid::dictation_pid_path();
     if let Ok(Some(existing)) = pid::check_pid_file(&dict_pid) {

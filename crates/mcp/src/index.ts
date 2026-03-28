@@ -181,7 +181,8 @@ function findMinutesBinary(): string {
 let MINUTES_BIN = findMinutesBinary();
 
 // ── Expected CLI version (must match this MCP server release) ──
-const EXPECTED_CLI_VERSION = "0.8.0";
+const EXPECTED_CLI_VERSION = "0.8.1";
+const RELEASE_TAG = "v0.8.1-live-coach";
 
 // ── CLI auto-install ────────────────────────────────────────
 // When installed via MCPB or `npx minutes-mcp`, the Rust CLI binary
@@ -218,13 +219,13 @@ async function tryAutoInstall(): Promise<boolean> {
   const binaryName = getReleaseBinaryName();
   if (binaryName) {
     try {
-      const url = `https://github.com/silverstein/minutes/releases/download/v${EXPECTED_CLI_VERSION}/${binaryName}`;
+      const url = `https://github.com/silverstein/minutes/releases/download/${RELEASE_TAG}/${binaryName}`;
       const installDir = getInstallDir();
       const isWindows = process.platform === "win32";
       const targetName = isWindows ? "minutes.exe" : "minutes";
       const targetPath = join(installDir, targetName);
 
-      console.error(`[Minutes] Downloading ${binaryName} from v${EXPECTED_CLI_VERSION} release...`);
+      console.error(`[Minutes] Downloading ${binaryName} from ${RELEASE_TAG} release...`);
 
       // Ensure install directory exists
       await execFileAsync("mkdir", ["-p", installDir], { timeout: 5000 }).catch(() => {});
@@ -429,7 +430,7 @@ function parseJsonOutput(stdout: string): any {
 
 const server = new McpServer({
   name: "minutes",
-  version: "0.8.0",
+  version: "0.8.1",
 });
 
 // Declare MCP Apps extension support so hosts classify this server as interactive.

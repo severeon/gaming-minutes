@@ -181,8 +181,8 @@ function findMinutesBinary(): string {
 let MINUTES_BIN = findMinutesBinary();
 
 // ── Expected CLI version (must match this MCP server release) ──
-const EXPECTED_CLI_VERSION = "0.8.1";
-const RELEASE_TAG = "v0.8.1-live-coach";
+const EXPECTED_CLI_VERSION = "0.8.4";
+const RELEASE_TAG = "v0.8.4";
 
 // ── CLI auto-install ────────────────────────────────────────
 // When installed via MCPB or `npx minutes-mcp`, the Rust CLI binary
@@ -430,7 +430,7 @@ function parseJsonOutput(stdout: string): any {
 
 const server = new McpServer({
   name: "minutes",
-  version: "0.8.3",
+  version: "0.8.4",
 });
 
 // Declare MCP Apps extension support so hosts classify this server as interactive.

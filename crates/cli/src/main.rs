@@ -415,6 +415,10 @@ enum VaultAction {
         /// Force a specific strategy: symlink, copy, or direct
         #[arg(short, long, value_parser = ["symlink", "copy", "direct"])]
         strategy: Option<String>,
+
+        /// Subdirectory inside the vault for meetings (default: "areas/meetings")
+        #[arg(long)]
+        subdir: Option<String>,
     },
     /// Check vault sync health
     Status,
@@ -553,7 +557,11 @@ fn main() -> Result<()> {
             cmd_import(&from, dir.as_deref(), dry_run, &config)
         }
         Commands::Vault { action } => match action {
-            VaultAction::Setup { path, strategy } => cmd_vault_setup(path, strategy, config),
+            VaultAction::Setup {
+                path,
+                strategy,
+                subdir,
+            } => cmd_vault_setup(path, strategy, subdir, config),
             VaultAction::Status => cmd_vault_status(&config),
             VaultAction::Unlink => cmd_vault_unlink(config),
             VaultAction::Sync => cmd_vault_sync(&config),
@@ -2630,9 +2638,15 @@ fn extract_section(content: &str, heading: &str) -> Option<String> {
 fn cmd_vault_setup(
     path: Option<PathBuf>,
     strategy_override: Option<String>,
+    subdir: Option<String>,
     mut config: Config,
 ) -> Result<()> {
     use minutes_core::vault;
+
+    // Apply custom subdir before any strategy logic uses it
+    if let Some(ref sub) = subdir {
+        config.vault.meetings_subdir = sub.clone();
+    }
 
     let vault_path = if let Some(p) = path {
         // Expand ~ to home directory
@@ -2803,6 +2817,7 @@ fn cmd_vault_status(config: &Config) -> Result<()> {
             eprintln!("Vault: healthy");
             eprintln!("  Strategy: {}", strategy);
             eprintln!("  Path: {}", path.display());
+            eprintln!("  Subdir: {}", config.vault.meetings_subdir);
         }
         vault::VaultStatus::BrokenSymlink { link_path, target } => {
             eprintln!("Vault: BROKEN SYMLINK");

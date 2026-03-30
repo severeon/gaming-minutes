@@ -331,16 +331,16 @@ pub fn requeue_job(job_id: &str) -> std::io::Result<Option<ProcessingJob>> {
         ));
     }
 
-    let requeued = enqueue_capture_job(
-        job.mode,
-        job.title.clone(),
-        audio_path,
-        job.user_notes.clone(),
-        job.pre_context.clone(),
-        job.recording_started_at,
-        job.recording_finished_at,
-        job.calendar_event.clone(),
-    )?;
+    let Some(requeued) = update_job_state(job_id, |job| {
+        job.state = JobState::Queued;
+        job.stage = JobState::Queued.default_stage();
+        job.started_at = None;
+        job.finished_at = None;
+        job.error = None;
+        job.owner_pid = None;
+    })? else {
+        return Ok(None);
+    };
     sync_processing_status();
     Ok(Some(requeued))
 }
@@ -474,6 +474,7 @@ where
             job.title.as_deref(),
             config,
             &context,
+            job.output_path.as_deref().map(Path::new),
         ) {
             Ok(artifact) => artifact,
             Err(error) => {
@@ -663,6 +664,44 @@ mod tests {
             assert_eq!(jobs.len(), 1);
             assert_eq!(jobs[0].state, JobState::Queued);
             assert_eq!(jobs[0].owner_pid, None);
+        });
+    }
+
+    #[test]
+    fn requeue_job_preserves_existing_output_path() {
+        with_temp_home(|_| {
+            let audio_path = PathBuf::from("/tmp/fake.wav");
+            let output_path = "/tmp/existing.md".to_string();
+            let job = ProcessingJob {
+                id: "job-failed".into(),
+                mode: CaptureMode::Meeting,
+                content_type: ContentType::Meeting,
+                title: Some("retry me".into()),
+                audio_path: audio_path.display().to_string(),
+                output_path: Some(output_path.clone()),
+                state: JobState::Failed,
+                stage: Some("Processing failed".into()),
+                created_at: Local::now(),
+                started_at: Some(Local::now()),
+                finished_at: Some(Local::now()),
+                recording_started_at: None,
+                recording_finished_at: None,
+                user_notes: None,
+                pre_context: None,
+                calendar_event: None,
+                word_count: Some(42),
+                error: Some("boom".into()),
+                owner_pid: None,
+            };
+            write_job(&job).unwrap();
+            fs::write(&audio_path, b"fake-wav").unwrap();
+
+            let requeued = requeue_job(&job.id).unwrap().unwrap();
+            assert_eq!(requeued.id, job.id);
+            assert_eq!(requeued.output_path.as_deref(), Some(output_path.as_str()));
+            assert_eq!(requeued.state, JobState::Queued);
+            assert_eq!(requeued.error, None);
+            assert_eq!(requeued.finished_at, None);
         });
     }
 }

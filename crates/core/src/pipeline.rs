@@ -112,6 +112,7 @@ pub fn transcribe_to_artifact(
     title: Option<&str>,
     config: &Config,
     context: &BackgroundPipelineContext,
+    existing_output_path: Option<&Path>,
 ) -> Result<TranscriptArtifact, MinutesError> {
     let metadata = std::fs::metadata(audio_path)?;
     if metadata.len() == 0 {
@@ -229,13 +230,23 @@ pub fn transcribe_to_artifact(
         speaker_map: vec![],
     };
 
-    let write_result = markdown::write(
-        &frontmatter,
-        &transcript,
-        None,
-        context.user_notes.as_deref(),
-        config,
-    )?;
+    let write_result = if let Some(path) = existing_output_path {
+        markdown::rewrite(
+            path,
+            &frontmatter,
+            &transcript,
+            None,
+            context.user_notes.as_deref(),
+        )?
+    } else {
+        markdown::write(
+            &frontmatter,
+            &transcript,
+            None,
+            context.user_notes.as_deref(),
+            config,
+        )?
+    };
 
     Ok(TranscriptArtifact {
         write_result,

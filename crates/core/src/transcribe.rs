@@ -248,7 +248,10 @@ fn transcribe_with_whisper(
     // Layer 4: Remove interleaved repetition (A/B/A/B patterns, filler-separated loops)
     let lines = dedup_interleaved(lines);
 
-    // Layer 5: Trim trailing noise ([music], [BLANK_AUDIO]) from the end
+    // Layer 5: Remove foreign-script hallucination (e.g., CJK in a Latin transcript)
+    let lines = strip_foreign_script(lines);
+
+    // Layer 6: Trim trailing noise ([music], [BLANK_AUDIO]) from the end
     let lines = trim_trailing_noise(lines);
 
     let transcript = lines.join("\n");
@@ -557,6 +560,9 @@ fn dedup_interleaved(lines: Vec<String>) -> Vec<String> {
 }
 fn trim_trailing_noise(lines: Vec<String>) -> Vec<String> {
     wg_segments::trim_trailing_noise(&lines)
+}
+fn strip_foreign_script(lines: Vec<String>) -> Vec<String> {
+    wg_segments::strip_foreign_script(&lines)
 }
 
 // ── Noise reduction ──────────────────────────────────────────
@@ -969,6 +975,7 @@ fn parse_parakeet_output(raw_output: &str, config: &Config) -> Result<String, Tr
     // Full anti-hallucination pipeline (same as whisper path)
     let lines = dedup_segments(lines);
     let lines = dedup_interleaved(lines);
+    let lines = strip_foreign_script(lines);
     let lines = trim_trailing_noise(lines);
 
     let transcript = lines.join("\n");

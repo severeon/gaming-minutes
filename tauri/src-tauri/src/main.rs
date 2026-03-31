@@ -953,17 +953,20 @@ fn main() {
                 };
                 minutes_core::desktop_control::write_desktop_app_status(&status).ok();
 
-                let pending = minutes_core::desktop_control::pending_requests();
+                let pending = minutes_core::desktop_control::claim_pending_requests(
+                    &std::process::id().to_string(),
+                );
                 if !pending.is_empty() {
                     let state = app_control.state::<commands::AppState>();
-                    for request in pending {
+                    for claimed in pending {
                         let response = commands::handle_desktop_control_request(
                             app_control.clone(),
                             &state,
-                            request.clone(),
+                            claimed.request.clone(),
                         );
                         minutes_core::desktop_control::write_response(&response).ok();
-                        minutes_core::desktop_control::remove_request(&request.id).ok();
+                        minutes_core::desktop_control::finish_claimed_request(&claimed.claim_path)
+                            .ok();
                     }
                 }
 

@@ -4,7 +4,7 @@ use crate::pid::CaptureMode;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn control_dir() -> PathBuf {
     Config::minutes_dir().join("desktop-control")
@@ -63,6 +63,12 @@ pub struct DesktopControlResponse {
     pub detail: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ClaimedDesktopControlRequest {
+    pub request: DesktopControlRequest,
+    pub claim_path: PathBuf,
+}
+
 fn ensure_dirs() -> std::io::Result<()> {
     fs::create_dir_all(requests_dir())?;
     fs::create_dir_all(responses_dir())?;
@@ -101,6 +107,11 @@ pub fn response_path(id: &str) -> PathBuf {
     responses_dir().join(format!("{}.json", id))
 }
 
+fn claimed_request_path(path: &Path, claimant: &str) -> PathBuf {
+    let extension = format!("claimed-{claimant}");
+    path.with_extension(extension)
+}
+
 pub fn write_request(request: &DesktopControlRequest) -> std::io::Result<()> {
     ensure_dirs()?;
     let path = request_path(&request.id);
@@ -135,7 +146,7 @@ pub fn remove_response(id: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn pending_requests() -> Vec<DesktopControlRequest> {
+pub fn claim_pending_requests(claimant: &str) -> Vec<ClaimedDesktopControlRequest> {
     let mut requests = Vec::new();
     let dir = requests_dir();
     if !dir.exists() {
@@ -147,13 +158,108 @@ pub fn pending_requests() -> Vec<DesktopControlRequest> {
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        if let Ok(text) = fs::read_to_string(&path) {
-            if let Ok(request) = serde_json::from_str::<DesktopControlRequest>(&text) {
-                requests.push(request);
+
+        let claim_path = claimed_request_path(&path, claimant);
+        if fs::rename(&path, &claim_path).is_err() {
+            continue;
+        }
+
+        match fs::read_to_string(&claim_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<DesktopControlRequest>(&text).ok())
+        {
+            Some(request) => requests.push(ClaimedDesktopControlRequest {
+                request,
+                claim_path,
+            }),
+            None => {
+                fs::remove_file(&claim_path).ok();
             }
         }
     }
 
-    requests.sort_by_key(|request| request.created_at);
+    requests.sort_by_key(|claimed| claimed.request.created_at);
     requests
+}
+
+pub fn finish_claimed_request(claim_path: &Path) -> std::io::Result<()> {
+    if claim_path.exists() {
+        fs::remove_file(claim_path)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    #[test]
+    fn claim_pending_requests_is_single_claim() {
+        let _guard = crate::test_home_env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let original_home = std::env::var_os("HOME");
+        #[cfg(windows)]
+        let original_userprofile = std::env::var_os("USERPROFILE");
+        std::env::set_var("HOME", dir.path());
+        #[cfg(windows)]
+        std::env::set_var("USERPROFILE", dir.path());
+
+        let restore_env = || {
+            if let Some(home) = original_home.as_ref() {
+                std::env::set_var("HOME", home);
+            } else {
+                std::env::remove_var("HOME");
+            }
+            #[cfg(windows)]
+            if let Some(userprofile) = original_userprofile.as_ref() {
+                std::env::set_var("USERPROFILE", userprofile);
+            } else {
+                std::env::remove_var("USERPROFILE");
+            }
+        };
+
+        let now = Local::now();
+        let first = DesktopControlRequest {
+            id: "first".into(),
+            created_at: now,
+            action: DesktopControlAction::StartRecording(StartRecordingRequest {
+                mode: CaptureMode::Meeting,
+                intent: None,
+                allow_degraded: false,
+                title: None,
+                language: None,
+            }),
+        };
+        let second = DesktopControlRequest {
+            id: "second".into(),
+            created_at: now + Duration::milliseconds(1),
+            action: DesktopControlAction::StartRecording(StartRecordingRequest {
+                mode: CaptureMode::Meeting,
+                intent: None,
+                allow_degraded: false,
+                title: None,
+                language: None,
+            }),
+        };
+
+        write_request(&first).unwrap();
+        write_request(&second).unwrap();
+
+        let claimed = claim_pending_requests("pid-1");
+        assert_eq!(
+            claimed
+                .iter()
+                .map(|item| item.request.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        assert!(claim_pending_requests("pid-2").is_empty());
+
+        for item in claimed {
+            finish_claimed_request(&item.claim_path).unwrap();
+        }
+
+        restore_env();
+    }
 }

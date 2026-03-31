@@ -360,11 +360,23 @@ mod tests {
             apps: vec!["zoom.us".into()],
         });
 
-        assert!(detector.note_active_call("zoom.us"));
-        assert!(!detector.note_active_call("zoom.us"));
+        assert!(matches!(
+            detector.note_active_call("zoom.us"),
+            DetectionTransition::NewSession
+        ));
+        assert!(matches!(
+            detector.note_active_call("zoom.us"),
+            DetectionTransition::Noop
+        ));
         detector.clear_active_call();
-        assert!(detector.note_active_call("zoom.us"));
-        assert!(detector.note_active_call("face.time"));
+        assert!(matches!(
+            detector.note_active_call("zoom.us"),
+            DetectionTransition::NewSession
+        ));
+        assert!(matches!(
+            detector.note_active_call("face.time"),
+            DetectionTransition::NewSession
+        ));
     }
 
     #[test]

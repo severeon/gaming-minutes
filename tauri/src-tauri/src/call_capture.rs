@@ -28,6 +28,22 @@ pub struct NativeCallCaptureSession {
     health: Arc<Mutex<CallSourceHealth>>,
 }
 
+fn parse_macos_major_version(version: &str) -> Option<u32> {
+    version.trim().split('.').next()?.parse().ok()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_major_version() -> Option<u32> {
+    let output = Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_macos_major_version(&String::from_utf8_lossy(&output.stdout))
+}
+
 impl NativeCallCaptureSession {
     pub fn output_path(&self) -> &Path {
         &self.output_path
@@ -102,6 +118,23 @@ pub fn availability() -> CallCaptureAvailability {
 
     #[cfg(target_os = "macos")]
     {
+        match macos_major_version() {
+            Some(major) if major < 15 => {
+                return CallCaptureAvailability::Unsupported {
+                    detail: format!(
+                        "Native call capture requires macOS 15 or newer. This Mac reports macOS {}.",
+                        major
+                    ),
+                };
+            }
+            None => {
+                return CallCaptureAvailability::Unavailable {
+                    detail: "Could not determine the macOS version for native call capture.".into(),
+                };
+            }
+            _ => {}
+        }
+
         match find_native_call_helper_binary() {
             Some(_) => CallCaptureAvailability::Available {
                 backend: "screencapturekit-helper".into(),
@@ -115,6 +148,15 @@ pub fn availability() -> CallCaptureAvailability {
 
 #[cfg(target_os = "macos")]
 pub fn start_native_call_capture() -> Result<NativeCallCaptureSession, String> {
+    if let Some(major) = macos_major_version() {
+        if major < 15 {
+            return Err(format!(
+                "native call capture requires macOS 15 or newer (found macOS {})",
+                major
+            ));
+        }
+    }
+
     let helper = find_native_call_helper_binary()
         .ok_or_else(|| "native call helper binary is unavailable".to_string())?;
     let output_path = native_call_output_path()?;
@@ -253,4 +295,17 @@ fn find_native_call_helper_binary() -> Option<PathBuf> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_macos_major_version;
+
+    #[test]
+    fn parses_major_version_from_product_version() {
+        assert_eq!(parse_macos_major_version("15.0.1"), Some(15));
+        assert_eq!(parse_macos_major_version("14.7"), Some(14));
+        assert_eq!(parse_macos_major_version(""), None);
+        assert_eq!(parse_macos_major_version("not-a-version"), None);
+    }
 }

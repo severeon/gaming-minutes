@@ -54,3 +54,13 @@ pub use pipeline::process;
 pub use streaming::{AudioChunk, AudioStream};
 #[cfg(feature = "streaming")]
 pub use vad::{Vad, VadResult};
+
+#[cfg(test)]
+pub(crate) fn test_home_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}

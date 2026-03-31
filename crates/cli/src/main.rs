@@ -675,6 +675,12 @@ fn capture_mode_from_str(mode: &str) -> Result<CaptureMode> {
     }
 }
 
+fn cleanup_live_capture_state() {
+    minutes_core::pid::remove().ok();
+    minutes_core::pid::clear_recording_metadata().ok();
+    minutes_core::notes::cleanup();
+}
+
 fn cmd_record(
     title: Option<String>,
     context: Option<String>,
@@ -754,41 +760,45 @@ fn cmd_record(
     } else {
         None
     };
-    let job = minutes_core::jobs::queue_live_capture(
-        capture_mode,
-        title.clone(),
-        &wav_path,
-        user_notes,
-        pre_context,
-        Some(recording_started_at),
-        Some(recording_finished_at),
-        calendar_event,
-    )?;
+    let queued = (|| -> Result<(minutes_core::jobs::ProcessingJob, String)> {
+        let job = minutes_core::jobs::queue_live_capture(
+            capture_mode,
+            title.clone(),
+            &wav_path,
+            user_notes,
+            pre_context,
+            Some(recording_started_at),
+            Some(recording_finished_at),
+            calendar_event,
+        )?;
 
-    let queued_result = serde_json::to_string_pretty(&serde_json::json!({
-        "status": "queued",
-        "job_id": job.id,
-        "title": job.title,
-        "mode": mode,
-    }))?;
-    std::fs::write(minutes_core::pid::last_result_path(), &queued_result)?;
+        let queued_result = serde_json::to_string_pretty(&serde_json::json!({
+            "status": "queued",
+            "job_id": job.id,
+            "title": job.title,
+            "mode": mode,
+        }))?;
 
-    minutes_core::pid::set_processing_status(
-        job.stage.as_deref(),
-        Some(capture_mode),
-        job.title.as_deref(),
-        Some(&job.id),
-        minutes_core::jobs::active_job_count(),
-    )
-    .ok();
+        if let Err(error) = std::fs::write(minutes_core::pid::last_result_path(), &queued_result) {
+            tracing::warn!(error = %error, "failed to persist queued result summary");
+        }
 
-    // Clean up live-capture state before the worker starts so a new meeting can begin.
-    minutes_core::pid::remove().ok();
-    minutes_core::pid::clear_recording_metadata().ok();
-    minutes_core::notes::cleanup();
+        minutes_core::pid::set_processing_status(
+            job.stage.as_deref(),
+            Some(capture_mode),
+            job.title.as_deref(),
+            Some(&job.id),
+            minutes_core::jobs::active_job_count(),
+        )
+        .ok();
 
-    spawn_queue_worker()?;
+        spawn_queue_worker()?;
+        Ok((job, queued_result))
+    })();
 
+    cleanup_live_capture_state();
+
+    let (job, queued_result) = queued?;
     eprintln!(
         "Queued {} processing{}.",
         capture_mode.noun(),
@@ -2489,6 +2499,44 @@ fn cmd_logs(errors: bool, lines: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn test_guard() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn with_temp_home<T>(f: impl FnOnce(&Path) -> T) -> T {
+        let _guard = test_guard();
+        let dir = std::env::temp_dir().join(format!(
+            "minutes-cli-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original_home = std::env::var_os("HOME");
+        let original_userprofile = std::env::var_os("USERPROFILE");
+        std::env::set_var("HOME", &dir);
+        std::env::set_var("USERPROFILE", &dir);
+        let result = f(&dir);
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(userprofile) = original_userprofile {
+            std::env::set_var("USERPROFILE", userprofile);
+        } else {
+            std::env::remove_var("USERPROFILE");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        result
+    }
 
     #[test]
     fn parse_qmd_collection_names_extracts_collection_headers() {
@@ -2521,6 +2569,24 @@ life (qmd://life/)
             parse_qmd_collection_path(output),
             Some(PathBuf::from("/Users/silverbook/meetings"))
         );
+    }
+
+    #[test]
+    fn cleanup_live_capture_state_clears_pid_metadata_and_notes() {
+        with_temp_home(|_| {
+            minutes_core::pid::create().unwrap();
+            minutes_core::pid::write_recording_metadata(CaptureMode::Meeting).unwrap();
+            minutes_core::notes::save_context("pricing review").unwrap();
+            minutes_core::notes::add_note("remember to ask about budget").unwrap();
+
+            cleanup_live_capture_state();
+
+            assert!(!minutes_core::pid::pid_path().exists());
+            assert!(!minutes_core::pid::recording_meta_path().exists());
+            assert!(!minutes_core::notes::recording_start_path().exists());
+            assert!(minutes_core::notes::read_context().is_none());
+            assert!(minutes_core::notes::read_notes().is_none());
+        });
     }
 }
 

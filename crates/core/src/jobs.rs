@@ -582,17 +582,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn test_guard() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
 
     fn with_temp_home<T>(f: impl FnOnce(&tempfile::TempDir) -> T) -> T {
-        let _guard = test_guard();
+        let _guard = crate::test_home_env_lock();
         let dir = tempfile::tempdir().unwrap();
         // Set HOME (Unix) and USERPROFILE (Windows) so dirs::home_dir() resolves to temp
         let original_home = std::env::var_os("HOME");

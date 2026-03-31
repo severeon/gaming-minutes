@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use crate::config::Config;
 use crate::markdown::ContentType;
@@ -147,6 +148,49 @@ fn events_path() -> PathBuf {
     Config::minutes_dir().join("events.jsonl")
 }
 
+fn event_log_paths() -> std::io::Result<Vec<PathBuf>> {
+    let dir = Config::minutes_dir();
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut paths = fs::read_dir(dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name == "events.jsonl" || (name.starts_with("events.") && name.ends_with(".jsonl")))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+
+    paths.sort_by_key(|path| {
+        path.metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    });
+    Ok(paths)
+}
+
+fn rotated_events_path_for(now: DateTime<Local>) -> PathBuf {
+    let dir = Config::minutes_dir();
+    let base = now.format("events.%Y-%m-%d-%H%M%S%3f").to_string();
+
+    for suffix in 0.. {
+        let filename = if suffix == 0 {
+            format!("{base}.jsonl")
+        } else {
+            format!("{base}-{suffix}.jsonl")
+        };
+        let candidate = dir.join(filename);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!("rotation path generation should always find a free filename")
+}
+
 /// Append one event as a JSON line to ~/.minutes/events.jsonl.
 pub fn append_event(event: MinutesEvent) {
     let envelope = EventEnvelope {
@@ -196,36 +240,40 @@ fn read_events_inner(
     since: Option<DateTime<Local>>,
     limit: Option<usize>,
 ) -> std::io::Result<Vec<EventEnvelope>> {
-    let path = events_path();
-    if !path.exists() {
+    let paths = event_log_paths()?;
+    if paths.is_empty() {
         return Ok(vec![]);
     }
 
-    let file = fs::File::open(&path)?;
-    let reader = BufReader::new(file);
     let mut events: Vec<EventEnvelope> = Vec::new();
 
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<EventEnvelope>(&line) {
-            Ok(envelope) => {
-                if let Some(ref since_dt) = since {
-                    if envelope.timestamp < *since_dt {
-                        continue;
-                    }
-                }
-                events.push(envelope);
+    for path in paths {
+        let file = fs::File::open(&path)?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
             }
-            Err(e) => {
-                tracing::debug!(error = %e, "skipping malformed event line");
+            match serde_json::from_str::<EventEnvelope>(&line) {
+                Ok(envelope) => {
+                    if let Some(ref since_dt) = since {
+                        if envelope.timestamp < *since_dt {
+                            continue;
+                        }
+                    }
+                    events.push(envelope);
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, path = %path.display(), "skipping malformed event line");
+                }
             }
         }
     }
 
-    // Return the most recent events (tail of file)
+    events.sort_by_key(|envelope| envelope.timestamp);
+
     if let Some(limit) = limit {
         let skip = events.len().saturating_sub(limit);
         events = events.into_iter().skip(skip).collect();
@@ -246,8 +294,7 @@ fn rotate_if_needed() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let date = Local::now().format("%Y-%m-%d").to_string();
-    let rotated = path.with_file_name(format!("events.{}.jsonl", date));
+    let rotated = rotated_events_path_for(Local::now());
     fs::rename(&path, &rotated)?;
     tracing::info!(
         from = %path.display(),
@@ -561,47 +608,52 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn set_events_dir(dir: &std::path::Path) -> PathBuf {
-        dir.join("events.jsonl")
+    fn with_temp_home<T>(f: impl FnOnce(&TempDir) -> T) -> T {
+        let _guard = crate::test_home_env_lock();
+        let dir = TempDir::new().unwrap();
+        let original_home = std::env::var_os("HOME");
+        let original_userprofile = std::env::var_os("USERPROFILE");
+        std::env::set_var("HOME", dir.path());
+        std::env::set_var("USERPROFILE", dir.path());
+        let result = f(&dir);
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(userprofile) = original_userprofile {
+            std::env::set_var("USERPROFILE", userprofile);
+        } else {
+            std::env::remove_var("USERPROFILE");
+        }
+        result
     }
 
     #[test]
     fn append_and_read_events() {
-        let dir = TempDir::new().unwrap();
-        let path = set_events_dir(dir.path());
+        with_temp_home(|_| {
+            let envelope = EventEnvelope {
+                timestamp: Local::now(),
+                event: MinutesEvent::RecordingCompleted {
+                    path: "/tmp/test.md".into(),
+                    title: "Test Meeting".into(),
+                    word_count: 100,
+                    content_type: "meeting".into(),
+                    duration: "5m".into(),
+                },
+            };
 
-        let envelope = EventEnvelope {
-            timestamp: Local::now(),
-            event: MinutesEvent::RecordingCompleted {
-                path: "/tmp/test.md".into(),
-                title: "Test Meeting".into(),
-                word_count: 100,
-                content_type: "meeting".into(),
-                duration: "5m".into(),
-            },
-        };
+            append_event_inner(&envelope).unwrap();
 
-        // Write directly to temp path
-        let line = serde_json::to_string(&envelope).unwrap();
-        fs::write(&path, format!("{}\n", line)).unwrap();
-
-        // Read back
-        let file = fs::File::open(&path).unwrap();
-        let reader = BufReader::new(file);
-        let mut events = Vec::new();
-        for line in reader.lines() {
-            let line = line.unwrap();
-            let parsed: EventEnvelope = serde_json::from_str(&line).unwrap();
-            events.push(parsed);
-        }
-
-        assert_eq!(events.len(), 1);
-        match &events[0].event {
-            MinutesEvent::RecordingCompleted { title, .. } => {
-                assert_eq!(title, "Test Meeting");
+            let events = read_events_inner(None, None).unwrap();
+            assert_eq!(events.len(), 1);
+            match &events[0].event {
+                MinutesEvent::RecordingCompleted { title, .. } => {
+                    assert_eq!(title, "Test Meeting");
+                }
+                _ => panic!("expected RecordingCompleted"),
             }
-            _ => panic!("expected RecordingCompleted"),
-        }
+        });
     }
 
     #[test]
@@ -621,10 +673,66 @@ mod tests {
 
     #[test]
     fn read_events_returns_empty_for_missing_file() {
-        // read_events_inner with a nonexistent path
-        let events = read_events_inner(None, None);
-        // This tests the real events path; if it doesn't exist, returns empty
-        assert!(events.is_ok());
+        with_temp_home(|_| {
+            let events = read_events_inner(None, None);
+            assert!(events.is_ok());
+            assert!(events.unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn read_events_includes_rotated_logs() {
+        with_temp_home(|_| {
+            let older = EventEnvelope {
+                timestamp: Local::now() - chrono::Duration::minutes(10),
+                event: MinutesEvent::NoteAdded {
+                    meeting_path: "/tmp/older.md".into(),
+                    text: "older".into(),
+                },
+            };
+            let newer = EventEnvelope {
+                timestamp: Local::now(),
+                event: MinutesEvent::NoteAdded {
+                    meeting_path: "/tmp/newer.md".into(),
+                    text: "newer".into(),
+                },
+            };
+
+            let rotated_path = rotated_events_path_for(older.timestamp);
+            fs::create_dir_all(rotated_path.parent().unwrap()).unwrap();
+            fs::write(&rotated_path, format!("{}\n", serde_json::to_string(&older).unwrap())).unwrap();
+            fs::write(events_path(), format!("{}\n", serde_json::to_string(&newer).unwrap())).unwrap();
+
+            let events = read_events_inner(None, None).unwrap();
+            assert_eq!(events.len(), 2);
+            match &events[0].event {
+                MinutesEvent::NoteAdded { text, .. } => assert_eq!(text, "older"),
+                _ => panic!("expected older NoteAdded"),
+            }
+            match &events[1].event {
+                MinutesEvent::NoteAdded { text, .. } => assert_eq!(text, "newer"),
+                _ => panic!("expected newer NoteAdded"),
+            }
+        });
+    }
+
+    #[test]
+    fn rotated_events_path_adds_suffix_when_base_exists() {
+        with_temp_home(|_| {
+            let now = Local::now();
+            let base = rotated_events_path_for(now);
+            fs::create_dir_all(base.parent().unwrap()).unwrap();
+            fs::write(&base, "existing").unwrap();
+
+            let next = rotated_events_path_for(now);
+            assert_ne!(base, next);
+            let base_stem = base.file_stem().and_then(|name| name.to_str()).unwrap();
+            let next_name = next.file_name().and_then(|name| name.to_str()).unwrap();
+            assert!(
+                next_name.starts_with(base_stem) && next_name.ends_with(".jsonl"),
+                "expected suffixed rotation filename, got {next_name}"
+            );
+        });
     }
 
     // ── MeetingInsight tests ──────────────────────────────────

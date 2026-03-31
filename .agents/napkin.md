@@ -39,6 +39,7 @@
 - Assuming this repo is only a CLI tool misses the Tauri desktop app and MCP integration surfaces that need review too.
 - Trusting `path.resolve(...).startsWith(...)` in Node is not a safe allowlist check here; it misses sibling-prefix and symlink cases.
 - In `crates/core/src/pid.rs`, reopening a PID file after taking an `fs2` exclusive lock is not portable; Windows can fail with `os error 33` even though the same flow appears fine on Unix.
+- Treating `cargo test --workspace` failures in `pid::tests::sentinel_lifecycle` as proof of a fresh regression is misleading; that test still uses the real `~/.minutes/recording.stop` path instead of an isolated temp home, so verify attribution before blaming today's queue/PID changes.
 
 ## Domain Notes
 - `minutes` is a local-first meeting capture app with Rust core/CLI, a Tauri desktop app, and a TypeScript MCP server.

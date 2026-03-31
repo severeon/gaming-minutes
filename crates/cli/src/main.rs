@@ -35,6 +35,10 @@ enum Commands {
         /// Live capture mode: meeting or quick-thought
         #[arg(long, default_value = "meeting", value_parser = ["meeting", "quick-thought"])]
         mode: String,
+
+        /// Transcription language (e.g. "en", "ur", "es"). Overrides config.toml setting.
+        #[arg(short, long)]
+        language: Option<String>,
     },
 
     /// Add a note to the current recording
@@ -229,12 +233,20 @@ enum Commands {
         /// Optional title
         #[arg(long)]
         title: Option<String>,
+
+        /// Transcription language (e.g. "en", "ur", "es"). Overrides config.toml setting.
+        #[arg(short, long)]
+        language: Option<String>,
     },
 
     /// Watch a folder for new audio files and process them automatically
     Watch {
         /// Directory to watch (default: ~/.minutes/inbox/)
         dir: Option<PathBuf>,
+
+        /// Transcription language (e.g. "en", "ur", "es"). Overrides config.toml setting.
+        #[arg(short, long)]
+        language: Option<String>,
     },
 
     /// Download whisper model and set up minutes
@@ -280,6 +292,10 @@ enum Commands {
         /// Only write to daily note (no clipboard)
         #[arg(long)]
         note_only: bool,
+
+        /// Transcription language (e.g. "en", "ur", "es"). Overrides config.toml setting.
+        #[arg(short, long)]
+        language: Option<String>,
     },
 
     /// List available audio input devices
@@ -402,7 +418,11 @@ enum Commands {
     },
 
     /// Start a live transcript session (real-time meeting transcription)
-    Live,
+    Live {
+        /// Transcription language (e.g. "en", "ur", "es"). Overrides config.toml setting.
+        #[arg(short, long)]
+        language: Option<String>,
+    },
 
     /// Read the live transcript (delta reads from an active or recent session)
     Transcript {
@@ -484,7 +504,7 @@ fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    let config = Config::load();
+    let mut config = Config::load();
 
     // Rotate old log files at startup
     minutes_core::logging::rotate_logs().ok();
@@ -494,7 +514,13 @@ fn main() -> Result<()> {
             title,
             context,
             mode,
-        } => cmd_record(title, context, &mode, &config),
+            language,
+        } => {
+            if let Some(lang) = language {
+                config.transcription.language = Some(lang);
+            }
+            cmd_record(title, context, &mode, &config)
+        }
         Commands::Note { text, meeting } => cmd_note(&text, meeting.as_deref(), &config),
         Commands::Stop => cmd_stop(&config),
         Commands::ProcessQueue => cmd_process_queue(&config),
@@ -553,7 +579,11 @@ fn main() -> Result<()> {
             content_type,
             note,
             title,
+            language,
         } => {
+            if let Some(lang) = language {
+                config.transcription.language = Some(lang);
+            }
             // Save note as context for the pipeline
             if let Some(ref n) = note {
                 minutes_core::notes::save_context(n)?;
@@ -564,8 +594,22 @@ fn main() -> Result<()> {
             }
             result
         }
-        Commands::Watch { dir } => cmd_watch(dir.as_deref(), &config),
-        Commands::Dictate { stdout, note_only } => cmd_dictate(stdout, note_only, &config),
+        Commands::Watch { dir, language } => {
+            if let Some(lang) = language {
+                config.transcription.language = Some(lang);
+            }
+            cmd_watch(dir.as_deref(), &config)
+        }
+        Commands::Dictate {
+            stdout,
+            note_only,
+            language,
+        } => {
+            if let Some(lang) = language {
+                config.transcription.language = Some(lang);
+            }
+            cmd_dictate(stdout, note_only, &config)
+        }
         Commands::Devices => cmd_devices(),
         Commands::Setup {
             model,
@@ -636,7 +680,12 @@ fn main() -> Result<()> {
             save_voice,
             &config,
         ),
-        Commands::Live => cmd_live(&config),
+        Commands::Live { language } => {
+            if let Some(lang) = language {
+                config.transcription.language = Some(lang);
+            }
+            cmd_live(&config)
+        }
         Commands::Transcript {
             since,
             status,

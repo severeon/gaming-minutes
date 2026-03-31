@@ -69,6 +69,7 @@ Everything runs locally. Your audio never leaves your machine (unless you opt in
 ```bash
 minutes record                                    # Record from mic
 minutes record --title "Standup" --context "Sprint 4 blockers"  # With context
+minutes record --language ur                      # Force Urdu (ISO 639-1 code)
 minutes stop                                      # Stop from another terminal
 ```
 
@@ -635,6 +636,8 @@ Optional — minutes works out of the box.
 [transcription]
 engine = "whisper"        # "whisper" (default) or "parakeet" (opt-in, lower WER)
 model = "small"           # whisper: tiny (75MB), base, small (466MB), medium, large-v3 (3.1GB)
+# language = "ur"          # Force transcription language (ISO 639-1 code, e.g. "en", "ur", "es", "zh")
+                          # Default: auto-detect. Set this for similar-sounding languages (Urdu/Hindi, etc.)
 # parakeet_model = "tdt-ctc-110m"  # parakeet: tdt-ctc-110m (English), tdt-600m (multilingual)
 # parakeet_binary = "parakeet"     # Path to parakeet.cpp binary (or name in PATH)
 # vad_model = "silero-v6.2.0"     # Silero VAD model (auto-downloaded by setup). Empty = disable.

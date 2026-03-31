@@ -526,9 +526,10 @@ server.tool(
       .optional()
       .default("meeting")
       .describe("Live capture mode"),
+    language: z.string().optional().describe("Transcription language code (e.g. 'en', 'ur', 'es', 'zh'). Overrides config.toml setting."),
   },
   { title: "Start Recording", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  async ({ title, mode }) => {
+  async ({ title, mode, language }) => {
     if (!(await isCliAvailable())) {
       return { content: [{ type: "text" as const, text: CLI_INSTALL_MSG }] };
     }
@@ -549,6 +550,7 @@ server.tool(
     // so we spawn it and let it run independently
     const args = ["record", "--mode", mode];
     if (title) args.push("--title", title);
+    if (language) args.push("--language", language);
 
     const child = spawn(MINUTES_BIN, args, {
       detached: true,
@@ -1261,9 +1263,10 @@ server.tool(
     file_path: z.string().describe("Path to audio file (.wav, .m4a, .mp3)"),
     type: z.enum(["meeting", "memo"]).optional().default("memo").describe("Content type"),
     title: z.string().optional().describe("Optional title"),
+    language: z.string().optional().describe("Transcription language code (e.g. 'en', 'ur', 'es', 'zh'). Overrides config.toml setting."),
   },
   { title: "Process Audio", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  async ({ file_path, type: contentType, title }) => {
+  async ({ file_path, type: contentType, title, language }) => {
     if (!(await isCliAvailable())) {
       return { content: [{ type: "text" as const, text: CLI_INSTALL_MSG }] };
     }
@@ -1278,6 +1281,7 @@ server.tool(
       const resolved = validatePathInDirectories(file_path, allowedDirs, audioExts);
       const args = ["process", resolved, "-t", contentType];
       if (title) args.push("--title", title);
+      if (language) args.push("--language", language);
       const { stdout } = await runMinutes(args, 300000);
       const result = parseJsonOutput(stdout);
 
@@ -1723,9 +1727,11 @@ server.resource(
 server.tool(
   "start_dictation",
   "Start dictation mode. Speak naturally — text accumulates across pauses and the combined result is written when dictation ends. Runs until stop_dictation is called or silence timeout.",
-  {},
+  {
+    language: z.string().optional().describe("Transcription language code (e.g. 'en', 'ur', 'es', 'zh'). Overrides config.toml setting."),
+  },
   { title: "Start Dictation", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  async () => {
+  async ({ language }) => {
     if (!(await isCliAvailable())) {
       return { content: [{ type: "text" as const, text: CLI_INSTALL_MSG }] };
     }
@@ -1743,7 +1749,9 @@ server.tool(
     }
 
     // Spawn detached dictation process
-    const child = spawn(MINUTES_BIN, ["dictate"], {
+    const dictArgs = ["dictate"];
+    if (language) dictArgs.push("--language", language);
+    const child = spawn(MINUTES_BIN, dictArgs, {
       detached: true,
       stdio: "ignore",
       env: { ...process.env, RUST_LOG: "info" },
@@ -1927,9 +1935,11 @@ server.tool(
 server.tool(
   "start_live_transcript",
   "Start a live transcript session. Records audio and transcribes in real-time, writing utterances to a JSONL file. Use read_live_transcript to read the transcript during the session. Runs until stop is called.",
-  {},
+  {
+    language: z.string().optional().describe("Transcription language code (e.g. 'en', 'ur', 'es', 'zh'). Overrides config.toml setting."),
+  },
   { title: "Start Live Transcript", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  async () => {
+  async ({ language }) => {
     if (!(await isCliAvailable())) {
       return { content: [{ type: "text" as const, text: CLI_INSTALL_MSG }] };
     }
@@ -1954,7 +1964,9 @@ server.tool(
     } catch { /* no active session, proceed */ }
 
     // Spawn detached live transcript process
-    const child = spawn(MINUTES_BIN, ["live"], {
+    const liveArgs = ["live"];
+    if (language) liveArgs.push("--language", language);
+    const child = spawn(MINUTES_BIN, liveArgs, {
       detached: true,
       stdio: "ignore",
       env: { ...process.env, RUST_LOG: "info" },

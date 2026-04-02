@@ -916,8 +916,10 @@ pub fn find_open_actions(
         }
 
         // Simple parse: find action_items section in frontmatter YAML
-        let full_fm = format!("---\n{}\n---", fm_str);
-        let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(&full_fm);
+        // Note: fm_str is already stripped of --- markers by split_frontmatter,
+        // so pass it directly — wrapping with --- would create a multi-document
+        // YAML that serde_yaml rejects.
+        let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(fm_str);
         if let Ok(yaml) = parsed {
             if let Some(items) = yaml.get("action_items").and_then(|v| v.as_sequence()) {
                 for item in items {
@@ -1465,5 +1467,29 @@ mod tests {
             .related_topics
             .iter()
             .any(|topic| topic.topic == "pricing"));
+    }
+
+    #[test]
+    fn find_open_actions_parses_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        create_test_file(
+            dir.path(),
+            "2026-03-17-test.md",
+            "---\ntitle: Test\ntype: meeting\ndate: 2026-03-17T12:00:00-07:00\nduration: 5m\nstatus: complete\naction_items:\n  - assignee: mat\n    task: Send doc\n    status: open\n  - assignee: alex\n    task: Review PR\n    status: done\ndecisions: []\nintents: []\n---\n\nTranscript\n",
+        );
+
+        let config = Config {
+            output_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        let results = find_open_actions(&config, None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].assignee, "mat");
+        assert_eq!(results[0].task, "Send doc");
+
+        // Filter by assignee
+        let filtered = find_open_actions(&config, Some("nobody")).unwrap();
+        assert!(filtered.is_empty());
     }
 }

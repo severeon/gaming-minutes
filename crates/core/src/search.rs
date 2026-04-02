@@ -1279,12 +1279,18 @@ mod tests {
             recorded_by: Some("sarah".into()),
         };
 
-        let matching_results =
-            process_intent_file(&dir.path().join("2026-03-17-test.md"), "", &matching_filters)
-                .unwrap();
-        let non_matching_results =
-            process_intent_file(&dir.path().join("2026-03-17-test.md"), "", &non_matching_filters)
-                .unwrap();
+        let matching_results = process_intent_file(
+            &dir.path().join("2026-03-17-test.md"),
+            "",
+            &matching_filters,
+        )
+        .unwrap();
+        let non_matching_results = process_intent_file(
+            &dir.path().join("2026-03-17-test.md"),
+            "",
+            &non_matching_filters,
+        )
+        .unwrap();
 
         assert_eq!(matching_results.len(), 1);
         assert!(non_matching_results.is_empty());

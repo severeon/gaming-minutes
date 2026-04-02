@@ -1850,6 +1850,22 @@
 
     .btn-sm { padding: 5px 12px; font-size: 12px; }
 
+    .device-picker {
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 8px;
+      font-size: 11px;
+      font-family: inherit;
+      max-width: 140px;
+      cursor: pointer;
+      -webkit-appearance: none;
+      outline: none;
+    }
+    .device-picker:hover { border-color: var(--text-tertiary); }
+    .device-picker:focus { border-color: var(--blue); }
+
     .btn-icon {
       padding: 4px 7px;
       font-size: 15px;
@@ -2072,19 +2088,7 @@
     <div class="footer-actions">
       <div style="display: flex; gap: 4px; align-items: center;">
         <button class="btn btn-primary" id="btn-record">Start Recording</button>
-        <select id="device-picker" title="Select microphone" style="
-          background: var(--bg-elevated);
-          color: var(--text-secondary);
-          border: 1px solid var(--border);
-          border-radius: var(--radius);
-          padding: 6px 8px;
-          font-size: 11px;
-          font-family: inherit;
-          max-width: 140px;
-          cursor: pointer;
-          -webkit-appearance: none;
-          outline: none;
-        ">
+        <select id="device-picker" class="device-picker" title="Select microphone">
           <option value="">System Default</option>
         </select>
       </div>
@@ -2137,7 +2141,7 @@
         <div class="detail-actions">
           <button class="btn btn-primary btn-sm" id="btn-discuss-ai">Discuss with Agent</button>
           <button class="btn btn-secondary btn-sm" id="btn-open-external">Open in Editor</button>
-          <button class="btn btn-secondary btn-sm" id="btn-delete-meeting" style="color: var(--red);">Delete</button>
+          <button class="btn btn-danger btn-sm" id="btn-delete-meeting">Delete</button>
         </div>
       </div>
       <div class="detail-scroll" id="detail-scroll">
@@ -3664,7 +3668,7 @@
     document.getElementById('btn-delete-meeting').addEventListener('click', async () => {
       if (!currentMeetingPath) return;
       const title = document.getElementById('detail-title').textContent || 'this meeting';
-      if (!confirm(`Archive "${title}"? It will be moved to the archive folder.`)) return;
+      if (!confirm(`Archive "${title}" and its audio recording? They will be moved to the archive folder.`)) return;
       try {
         const result = await invoke('cmd_delete_meeting', {
           path: currentMeetingPath,

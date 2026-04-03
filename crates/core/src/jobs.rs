@@ -403,6 +403,48 @@ fn should_preserve_capture(state: JobState) -> bool {
     matches!(state, JobState::NeedsReview | JobState::Failed)
 }
 
+/// Move the captured WAV alongside the output markdown so users can reprocess later.
+/// e.g. ~/meetings/2026-04-02-standup.md → ~/meetings/2026-04-02-standup.wav
+fn preserve_audio_alongside_output(job: &ProcessingJob) {
+    let Some(ref output_path) = job.output_path else {
+        return;
+    };
+    let output = PathBuf::from(output_path);
+    let audio_src = PathBuf::from(&job.audio_path);
+    if !audio_src.exists() {
+        return;
+    }
+    let audio_dest = output.with_extension("wav");
+    if let Err(e) = fs::rename(&audio_src, &audio_dest) {
+        // rename fails across filesystems; fall back to copy + delete
+        if let Err(e2) = fs::copy(&audio_src, &audio_dest) {
+            tracing::warn!(
+                src = %audio_src.display(),
+                dest = %audio_dest.display(),
+                error = %e2,
+                "failed to preserve audio alongside output (rename: {}, copy: {})", e, e2
+            );
+            return;
+        }
+        fs::remove_file(&audio_src).ok();
+    }
+    // Preserve same permissions as the markdown (0600)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&audio_dest, fs::Permissions::from_mode(0o600)).ok();
+    }
+    // Clean up any screen capture artifacts left in the jobs dir
+    let screens_dir = crate::screen::screens_dir_for(&PathBuf::from(&audio_src));
+    if screens_dir.exists() {
+        fs::remove_dir_all(screens_dir).ok();
+    }
+    tracing::info!(
+        path = %audio_dest.display(),
+        "preserved audio alongside transcript"
+    );
+}
+
 fn sync_processing_status() {
     if let Some(job) = processing_summary() {
         let title = job.title.as_deref().or(job.output_path.as_deref());
@@ -619,8 +661,8 @@ where
                 refresh_qmd_collection(config);
                 // Run post_record hook (async, non-blocking)
                 pipeline::run_post_record_hook(config, &result.path);
-                if !should_preserve_capture(completed_job.state) {
-                    remove_capture_artifacts(&completed_job);
+                if completed_job.state == JobState::Complete {
+                    preserve_audio_alongside_output(&completed_job);
                 }
                 sync_processing_status();
                 on_job_update(&completed_job);
@@ -747,6 +789,9 @@ mod tests {
         );
         assert!(JobState::NeedsReview.is_terminal());
         assert!(should_preserve_capture(JobState::NeedsReview));
+        // Complete jobs now preserve audio alongside the output markdown
+        // rather than deleting it, so should_preserve_capture is only
+        // used for NeedsReview/Failed (kept in jobs dir for inspection).
         assert!(!should_preserve_capture(JobState::Complete));
     }
 

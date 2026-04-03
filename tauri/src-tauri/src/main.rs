@@ -1020,30 +1020,33 @@ fn main() {
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(3));
                     let mut consecutive_timeouts: u32 = 0;
+                    let mut backoff_secs: u64 = 300; // starts at 5 min
                     loop {
-                        // Circuit breaker: back off after repeated calendar failures.
-                        // Calendar.app can hang on CalDAV sync or TCC prompts, spawning
-                        // orphaned osascript processes each attempt. After 3 failures,
-                        // wait 5 minutes before trying again.
-                        if consecutive_timeouts >= 3 {
+                        // Circuit breaker: back off with escalating delays.
+                        // Calendar.app can hang on CalDAV sync or TCC prompts.
+                        // After 2 failures, back off. Each cycle doubles the
+                        // backoff (5 min → 10 min → 20 min, capped at 30 min).
+                        if consecutive_timeouts >= 2 {
                             eprintln!(
-                                "[calendar] {} consecutive timeouts, backing off 5 min",
-                                consecutive_timeouts
+                                "[calendar] {} consecutive timeouts, backing off {}s",
+                                consecutive_timeouts, backoff_secs
                             );
-                            std::thread::sleep(std::time::Duration::from_secs(300));
-                            consecutive_timeouts = 0; // reset and retry
+                            std::thread::sleep(std::time::Duration::from_secs(backoff_secs));
+                            backoff_secs = (backoff_secs * 2).min(1800); // cap at 30 min
+                                                                         // Don't reset counter — one more failure keeps escalating
                         }
 
                         let start = std::time::Instant::now();
                         refresh_calendar_items(&app_cal, &menu_cal, &cal_timer);
                         let elapsed = start.elapsed();
 
-                        // If the query took close to the subprocess timeout (10s),
-                        // it almost certainly timed out waiting on Calendar.app.
-                        if elapsed >= std::time::Duration::from_secs(8) {
+                        // Subprocess timeout is 3s; anything over 2s means Calendar.app
+                        // is unhealthy or hung.
+                        if elapsed >= std::time::Duration::from_secs(2) {
                             consecutive_timeouts += 1;
                         } else {
                             consecutive_timeouts = 0;
+                            backoff_secs = 300; // reset backoff on success
                         }
 
                         std::thread::sleep(std::time::Duration::from_secs(CALENDAR_REFRESH_SECS));

@@ -12,7 +12,9 @@ use std::time::Duration;
 // ──────────────────────────────────────────────────────────────
 
 /// Maximum time to wait for a calendar subprocess before giving up.
-const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(10);
+/// Calendar queries should complete in <1s when Calendar.app is healthy.
+/// 3s is generous enough for slow CalDAV syncs but doesn't freeze the app.
+const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Run a Command with a timeout. Returns None if the process hangs or fails to start.
 ///
@@ -58,11 +60,14 @@ pub(crate) fn output_with_timeout(
             #[cfg(unix)]
             {
                 unsafe {
-                    // Kill the process group (negative PID) to catch any children
                     libc::kill(-(child_id as i32), libc::SIGKILL);
+                    // Also kill the PID directly in case setpgid raced
+                    libc::kill(child_id as i32, libc::SIGKILL);
                 }
             }
-            drop(handle); // detach — thread exits on its own after kill
+            // Wait briefly for the waiter thread to notice the kill and exit,
+            // so we don't leak threads + zombie processes across retries.
+            let _ = handle.join().ok();
             None
         }
     }
@@ -142,13 +147,15 @@ pub fn upcoming_events(lookahead_minutes: u32) -> Vec<CalendarEvent> {
     }
     #[cfg(target_os = "macos")]
     {
-        // Try compiled EventKit helper first
+        // Try compiled EventKit helper first (fastest path, no Apple Events)
         if let Some(events) = query_via_eventkit(lookahead_minutes) {
-            if !events.is_empty() {
-                return events;
-            }
+            // EventKit helper responded — use its result even if empty
+            // (empty means no events, not a failure). Don't fall through
+            // to AppleScript, which would double the timeout if Calendar
+            // is hung since both paths talk to the same backend.
+            return events;
         }
-        // AppleScript: fetch today's events, filter by time range
+        // AppleScript fallback: only reached when EventKit helper is missing
         query_via_applescript(lookahead_minutes)
     }
 }

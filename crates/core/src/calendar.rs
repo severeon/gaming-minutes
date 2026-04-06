@@ -264,9 +264,31 @@ return output"#;
         })
         .collect();
 
-    events.sort_by_key(|e| (e.minutes_until.abs(), e.title.clone()));
-    events.dedup_by(|a, b| a.title == b.title);
+    dedup_events(&mut events);
     events
+}
+
+/// Parse EventKit helper JSON output, extracting meeting URLs from raw location strings.
+fn parse_eventkit_output(stdout: &str) -> Vec<CalendarEvent> {
+    stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| {
+            let mut event: CalendarEvent = serde_json::from_str(line).ok()?;
+            // The helper outputs the raw location string as url —
+            // extract an actual meeting URL (Zoom, Meet, Teams, etc.) or set to None.
+            event.url = event.url.as_deref().and_then(extract_meeting_url);
+            Some(event)
+        })
+        .collect()
+}
+
+/// Deduplicate events by title, keeping the one closest to now.
+fn dedup_events(events: &mut Vec<CalendarEvent>) {
+    events.sort_by_key(|e| (e.title.clone(), e.minutes_until.abs()));
+    events.dedup_by(|a, b| a.title == b.title);
+    // Re-sort by proximity to now (most relevant first)
+    events.sort_by_key(|e| e.minutes_until.abs());
 }
 
 /// Query via compiled Swift EventKit helper (if available and permitted).
@@ -282,13 +304,7 @@ fn query_via_eventkit(lookahead_minutes: u32) -> Option<Vec<CalendarEvent>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let events: Vec<CalendarEvent> = stdout
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
-
-    Some(events)
+    Some(parse_eventkit_output(&stdout))
 }
 
 /// Query overlapping events via EventKit helper with a backward+forward window.
@@ -305,14 +321,8 @@ fn query_overlap_via_eventkit() -> Option<Vec<CalendarEvent>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut events: Vec<CalendarEvent> = stdout
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
-
-    events.sort_by_key(|e| (e.minutes_until.abs(), e.title.clone()));
-    events.dedup_by(|a, b| a.title == b.title);
+    let mut events = parse_eventkit_output(&stdout);
+    dedup_events(&mut events);
     Some(events)
 }
 

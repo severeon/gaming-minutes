@@ -10,10 +10,21 @@
 import EventKit
 import Foundation
 
+struct EventOutput: Codable {
+    let title: String
+    let start: String
+    let minutes_until: Int
+    let attendees: [String]
+    let url: String?
+}
+
 let lookaheadMinutes = Int(CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "240") ?? 240
 let lookbackMinutes = Int(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "0") ?? 0
 let store = EKEventStore()
 let semaphore = DispatchSemaphore(value: 0)
+
+let encoder = JSONEncoder()
+encoder.outputFormatting = [] // compact, single-line
 
 store.requestFullAccessToEvents { granted, error in
     defer { semaphore.signal() }
@@ -41,33 +52,28 @@ store.requestFullAccessToEvents { granted, error in
     for event in events {
         let mins = Int(event.startDate.timeIntervalSince(now) / 60)
         let startStr = formatter.string(from: event.startDate)
-        let title = (event.title ?? "Untitled")
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: " ")
+        let title = event.title ?? "Untitled"
 
         var attendeeNames: [String] = []
         if let attendees = event.attendees {
             for attendee in attendees {
                 if let name = attendee.name {
-                    let escaped = name
-                        .replacingOccurrences(of: "\\", with: "\\\\")
-                        .replacingOccurrences(of: "\"", with: "\\\"")
-                    attendeeNames.append(escaped)
+                    attendeeNames.append(name)
                 }
             }
         }
-        let attendeesJson = "[" + attendeeNames.map { "\"\($0)\"" }.joined(separator: ",") + "]"
 
-        var urlStr = "null"
-        if let location = event.location, !location.isEmpty {
-            let escaped = location
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-            urlStr = "\"\(escaped)\""
+        let output = EventOutput(
+            title: title,
+            start: startStr,
+            minutes_until: mins,
+            attendees: attendeeNames,
+            url: event.location
+        )
+
+        if let data = try? encoder.encode(output), let line = String(data: data, encoding: .utf8) {
+            print(line)
         }
-
-        print("{\"title\":\"\(title)\",\"start\":\"\(startStr)\",\"minutes_until\":\(mins),\"attendees\":\(attendeesJson),\"url\":\(urlStr)}")
     }
 }
 

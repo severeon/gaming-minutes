@@ -272,7 +272,7 @@ fn parse_summary_response(response: &str) -> Summary {
 // No API keys needed — uses the agent's own auth (subscription, OAuth, etc.)
 //
 // Supported agents:
-//   "claude" → `claude -p - --no-input` (Claude Code CLI)
+//   "claude" → `claude -p -` (Claude Code CLI)
 //   "codex"  → `codex exec - -s read-only` (OpenAI Codex CLI)
 //   "gemini" → `gemini -p -` (Gemini CLI)
 //   Any other → treated as a command that accepts a prompt on stdin
@@ -395,7 +395,7 @@ fn summarize_with_agent_impl(
     // Piping is universally safe and works with all agents.
     let (cmd, args): (&str, Vec<&str>) = if agent_cmd == "claude" || agent_cmd.ends_with("/claude")
     {
-        (&agent_cmd, vec!["-p", "-", "--no-input"])
+        (&agent_cmd, vec!["-p", "-"])
     } else if agent_cmd == "codex" || agent_cmd.ends_with("/codex") {
         (&agent_cmd, vec!["exec", "-", "-s", "read-only"])
     } else if agent_cmd == "gemini" || agent_cmd.ends_with("/gemini") {
@@ -1096,7 +1096,7 @@ fn run_speaker_mapping_via_agent(
     let agent_cmd = resolve_agent_path(&agent_cmd);
     let (cmd, args): (&str, Vec<&str>) = if agent_cmd == "claude" || agent_cmd.ends_with("/claude")
     {
-        (&agent_cmd, vec!["-p", "-", "--no-input"])
+        (&agent_cmd, vec!["-p", "-"])
     } else if agent_cmd == "codex" || agent_cmd.ends_with("/codex") {
         (&agent_cmd, vec!["exec", "-", "-s", "read-only"])
     } else if agent_cmd == "gemini" || agent_cmd.ends_with("/gemini") {
@@ -1288,7 +1288,8 @@ PARTICIPANTS:
 
     #[test]
     fn summarize_returns_none_when_disabled() {
-        let config = Config::default(); // engine = "none"
+        let mut config = Config::default();
+        config.summarization.engine = "none".into();
         let result = summarize("some transcript", &config);
         assert!(result.is_none());
     }

@@ -10,6 +10,80 @@ use chrono::{DateTime, Local};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+/// Result of Level 2 voice enrollment matching.
+struct VoiceMatchResult {
+    /// Speaker attributions from voice matching (one per matched label).
+    attributions: Vec<diarize::SpeakerAttribution>,
+    /// Whether the user's own enrolled profile exists in the database
+    /// (by `config.identity.name`), regardless of whether it matched a speaker.
+    self_profile_exists: bool,
+}
+
+/// Match diarized speaker embeddings against enrolled voice profiles (Level 2).
+///
+/// For each speaker label, `match_embedding` returns at most one name — the
+/// profile with the highest cosine similarity above threshold. This means each
+/// label gets at most one attribution, even if multiple profiles exceed the
+/// threshold.
+fn match_speakers_by_voice(
+    config: &Config,
+    diarization_embeddings: &std::collections::HashMap<String, Vec<f32>>,
+) -> VoiceMatchResult {
+    if !config.voice.enabled || diarization_embeddings.is_empty() {
+        return VoiceMatchResult {
+            attributions: Vec::new(),
+            self_profile_exists: false,
+        };
+    }
+
+    let profiles = crate::voice::open_db()
+        .ok()
+        .and_then(|conn| crate::voice::load_all_with_embeddings(&conn).ok())
+        .unwrap_or_default();
+
+    if profiles.is_empty() {
+        return VoiceMatchResult {
+            attributions: Vec::new(),
+            self_profile_exists: false,
+        };
+    }
+
+    let self_profile_exists = config
+        .identity
+        .name
+        .as_ref()
+        .map(|name| {
+            let slug = slugify(name);
+            profiles.iter().any(|p| p.person_slug == slug)
+        })
+        .unwrap_or(false);
+
+    let threshold = config.voice.match_threshold;
+    let mut attributions = Vec::new();
+
+    for (label, emb) in diarization_embeddings {
+        if let Some(name) = crate::voice::match_embedding(emb, &profiles, threshold) {
+            tracing::info!(
+                speaker = %label,
+                name = %name,
+                threshold = threshold,
+                "Level 2: voice enrollment match"
+            );
+            attributions.push(diarize::SpeakerAttribution {
+                speaker_label: label.clone(),
+                name,
+                confidence: diarize::Confidence::High,
+                source: diarize::AttributionSource::Enrollment,
+            });
+        }
+    }
+
+    VoiceMatchResult {
+        attributions,
+        self_profile_exists,
+    }
+}
+
 // ──────────────────────────────────────────────────────────────
 // Pipeline orchestration:
 //
@@ -376,17 +450,23 @@ where
     }
 
     let mut speaker_map: Vec<diarize::SpeakerAttribution> = Vec::new();
-    let mut enrolled_profile_found: Option<String> = None;
     if diarization_num_speakers > 0 && artifact.frontmatter.r#type == ContentType::Meeting {
-        if let Some(self_profile) = crate::voice::load_self_profile(config) {
-            enrolled_profile_found = Some(self_profile.name.clone());
-        }
+        // Level 2: Voice enrollment matching via embedding cosine similarity.
+        let voice_result = match_speakers_by_voice(config, &diarization_embeddings);
+        speaker_map.extend(voice_result.attributions);
 
+        // Level 0: deterministic 1-on-1 mapping (skip if Level 2 already matched)
         let transcript_labels = crate::summarize::extract_speaker_labels_pub(&transcript);
+        let l2_labels: std::collections::HashSet<String> = speaker_map
+            .iter()
+            .map(|a| a.speaker_label.clone())
+            .collect();
+
         if !attendees.is_empty()
             && diarization_num_speakers == attendees.len()
             && diarization_num_speakers == 2
             && transcript_labels.len() == 2
+            && l2_labels.is_empty()
         {
             if let Some(my_name) = config.identity.name.as_ref() {
                 let my_slug = slugify(my_name);
@@ -394,12 +474,12 @@ where
                     .iter()
                     .find(|attendee| slugify(attendee) != my_slug);
                 if let Some(other_name) = other {
-                    let my_confidence = if enrolled_profile_found.is_some() {
+                    let my_confidence = if voice_result.self_profile_exists {
                         diarize::Confidence::High
                     } else {
                         diarize::Confidence::Medium
                     };
-                    let my_source = if enrolled_profile_found.is_some() {
+                    let my_source = if voice_result.self_profile_exists {
                         diarize::AttributionSource::Enrollment
                     } else {
                         diarize::AttributionSource::Deterministic
@@ -740,49 +820,35 @@ where
     // Level 2 → Level 0 → Level 1 (voice enrollment → deterministic → LLM)
     let mut speaker_map: Vec<diarize::SpeakerAttribution> = Vec::new();
     let mut transcript = transcript;
-    let mut enrolled_profile_found: Option<String> = None;
 
     if diarization_num_speakers > 0 && content_type == ContentType::Meeting {
-        // Level 2: Voice enrollment matching
-        // If the user has enrolled their voice, find which SPEAKER_X is them
-        if let Some(self_profile) = crate::voice::load_self_profile(config) {
-            // Scan transcript for speaker labels and try to match by looking
-            // at the dominant speaker (most lines). In a real implementation,
-            // we'd match per-segment embeddings, but for now we use the fact
-            // that the enrolled user's name + dominant speaker heuristic works.
-            // Full per-segment matching comes with Level 3's extended DiarizationResult.
-            tracing::info!(
-                name = %self_profile.name,
-                "Level 2: enrolled voice profile found"
-            );
+        // Level 2: Voice enrollment matching via embedding cosine similarity.
+        let voice_result = match_speakers_by_voice(config, &diarization_embeddings);
+        speaker_map.extend(voice_result.attributions);
 
-            // For now, if identity.name matches an enrolled profile AND Level 0
-            // would assign them, upgrade that assignment to High confidence.
-            // Full embedding-based matching requires per-segment embeddings in
-            // DiarizationResult (Level 3 extension).
-            enrolled_profile_found = Some(self_profile.name.clone());
-        }
-
-        // Level 0: deterministic 1-on-1 mapping
-        // Extract actual speaker labels from transcript (handles both native SPEAKER_1
-        // and Python subprocess SPEAKER_00 formats)
+        // Level 0: deterministic 1-on-1 mapping (skip if Level 2 already matched)
         let transcript_labels = crate::summarize::extract_speaker_labels_pub(&transcript);
+        let l2_labels: std::collections::HashSet<String> = speaker_map
+            .iter()
+            .map(|a| a.speaker_label.clone())
+            .collect();
 
         if !attendees.is_empty()
             && diarization_num_speakers == attendees.len()
             && diarization_num_speakers == 2
             && transcript_labels.len() == 2
+            && l2_labels.is_empty()
         {
             if let Some(my_name) = config.identity.name.as_ref() {
                 let my_slug = slugify(my_name);
                 let other = attendees.iter().find(|a| slugify(a) != my_slug);
                 if let Some(other_name) = other {
-                    let my_confidence = if enrolled_profile_found.is_some() {
+                    let my_confidence = if voice_result.self_profile_exists {
                         diarize::Confidence::High
                     } else {
                         diarize::Confidence::Medium
                     };
-                    let my_source = if enrolled_profile_found.is_some() {
+                    let my_source = if voice_result.self_profile_exists {
                         diarize::AttributionSource::Enrollment
                     } else {
                         diarize::AttributionSource::Deterministic

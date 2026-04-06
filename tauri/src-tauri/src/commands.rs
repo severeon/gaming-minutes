@@ -4066,7 +4066,7 @@ fn try_acquire_live(state: &AppState) -> Result<(), String> {
     }
     if recording_active(&state.recording) {
         state.live_transcript_active.store(false, Ordering::SeqCst);
-        return Err("Recording in progress — stop recording first".into());
+        return Err("Recording already in progress — it already includes a live transcript".into());
     }
     if state.dictation_active.load(Ordering::Relaxed) {
         state.live_transcript_active.store(false, Ordering::SeqCst);

@@ -57,6 +57,17 @@ pub struct TranscriptLine {
     pub speaker: Option<String>,
 }
 
+/// How the live transcript is being produced.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TranscriptSource {
+    /// Standalone `minutes live` session.
+    #[serde(rename = "standalone")]
+    Standalone,
+    /// Sidecar running alongside `minutes record`.
+    #[serde(rename = "recording-sidecar")]
+    RecordingSidecar,
+}
+
 /// Status of the live transcript session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionStatus {
@@ -65,6 +76,9 @@ pub struct SessionStatus {
     pub line_count: usize,
     pub duration_secs: f64,
     pub jsonl_path: Option<String>,
+    /// How the transcript is being produced (standalone or recording sidecar).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<TranscriptSource>,
 }
 
 /// Manages writing the JSONL and optional WAV file during a live session.
@@ -438,6 +452,7 @@ fn run_inner(
     }
 
     let (lines, duration, path) = writer.finalize();
+    remove_status_file();
     tracing::info!(
         lines = lines,
         duration_secs = format!("{:.1}", duration),
@@ -480,10 +495,12 @@ pub fn run_sidecar_mpsc(
 ) {
     if let Err(e) = run_sidecar_inner_mpsc(rx, stop_flag, config) {
         eprintln!(
-            "[minutes] Live sidecar unavailable: {} — recording continues without real-time transcript",
+            "[minutes] Live transcript unavailable: {} — recording continues without real-time transcript",
             e
         );
         tracing::warn!("live sidecar stopped: {}", e);
+        // Clean up status file so session_status() doesn't report a dead sidecar as active
+        remove_status_file();
     }
 }
 
@@ -591,6 +608,8 @@ fn run_sidecar_inner_mpsc(
     }
 
     let (lines, duration, _path) = writer.finalize();
+    // Clean up status file so session_status() doesn't report stale data
+    remove_status_file();
     tracing::info!(
         lines = lines,
         duration_secs = format!("{:.1}", duration),
@@ -666,42 +685,65 @@ pub fn read_since_duration(duration_ms: u64) -> Result<Vec<TranscriptLine>, Minu
 }
 
 /// Get the status of the current live transcript session.
+///
+/// Detects both standalone live transcript sessions (via live-transcript.pid)
+/// and recording sidecar sessions (recording active + sidecar status file exists).
 pub fn session_status() -> SessionStatus {
-    // Single PID read
+    // Check standalone live transcript PID
     let lt_pid = pid::live_transcript_pid_path();
-    let pid = pid::check_pid_file(&lt_pid).ok().flatten();
-    let active = pid.is_some();
+    let lt_process_pid = pid::check_pid_file(&lt_pid).ok().flatten();
+
+    // A recording sidecar runs whenever recording is active (whisper+streaming builds only).
+    // The status file may not exist yet during whisper model loading, but is removed when
+    // the sidecar exits — so recording_pid alone is sufficient to detect activity.
+    let recording_pid = pid::check_recording().ok().flatten();
+    let status_path = pid::live_transcript_status_path();
+    #[cfg(all(feature = "whisper", feature = "streaming"))]
+    let sidecar_active = recording_pid.is_some();
+    #[cfg(not(all(feature = "whisper", feature = "streaming")))]
+    let sidecar_active = false;
+
+    let active = lt_process_pid.is_some() || sidecar_active;
+    let pid = lt_process_pid.or(recording_pid);
 
     let jsonl_path = pid::live_transcript_jsonl_path();
 
-    // Read from sidecar if available (O(1) instead of reparsing full JSONL)
-    let status_path = pid::live_transcript_status_path();
-    let (line_count, duration_secs) = if let Ok(content) = std::fs::read_to_string(&status_path) {
-        if let Ok(status) = serde_json::from_str::<LiveStatus>(&content) {
-            let elapsed = (Local::now() - status.start_time).num_seconds().max(0) as f64;
-            // When active, show wall-clock elapsed. When inactive, show transcript span.
-            let dur = if active {
-                elapsed
+    // Read stats from status file or JSONL. Only report non-zero values when
+    // a session is active — otherwise stale files would leak old data.
+    let (line_count, duration_secs) = if active {
+        if let Ok(content) = std::fs::read_to_string(&status_path) {
+            if let Ok(status) = serde_json::from_str::<LiveStatus>(&content) {
+                let elapsed = (Local::now() - status.start_time).num_seconds().max(0) as f64;
+                (status.line_count, elapsed)
             } else {
-                (status.last_offset_ms + status.last_duration_ms) as f64 / 1000.0
-            };
-            (status.line_count, dur)
+                (0, 0.0)
+            }
         } else {
-            (0, 0.0)
+            // Fallback: no status file, parse JSONL
+            let lines = if jsonl_path.exists() {
+                read_since_line(0).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let count = lines.len();
+            let dur = lines
+                .last()
+                .map(|l| (l.offset_ms + l.duration_ms) as f64 / 1000.0)
+                .unwrap_or(0.0);
+            (count, dur)
         }
     } else {
-        // Fallback: no sidecar, parse JSONL (legacy path)
-        let lines = if jsonl_path.exists() {
-            read_since_line(0).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        let count = lines.len();
-        let dur = lines
-            .last()
-            .map(|l| (l.offset_ms + l.duration_ms) as f64 / 1000.0)
-            .unwrap_or(0.0);
-        (count, dur)
+        // Inactive — report zeros. The JSONL file may still exist from a
+        // previous session, but its stats are not relevant.
+        (0, 0.0)
+    };
+
+    let source = if lt_process_pid.is_some() {
+        Some(TranscriptSource::Standalone)
+    } else if sidecar_active {
+        Some(TranscriptSource::RecordingSidecar)
+    } else {
+        None
     };
 
     SessionStatus {
@@ -714,6 +756,7 @@ pub fn session_status() -> SessionStatus {
         } else {
             None
         },
+        source,
     }
 }
 
@@ -723,6 +766,11 @@ fn set_permissions_0600(path: &std::path::Path) {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
+}
+
+/// Remove the status file so `session_status()` won't report stale data.
+fn remove_status_file() {
+    std::fs::remove_file(pid::live_transcript_status_path()).ok();
 }
 
 // ── Tests ───────────────────────────────────────────────────────

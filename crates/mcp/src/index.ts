@@ -682,12 +682,20 @@ server.tool(
         await new Promise((r) => setTimeout(r, 750));
         const { stdout: newStatus } = await runMinutes(["status"]);
         const result = parseJsonOutput(newStatus);
+        let desktopLiveMsg = "";
+        try {
+          const { stdout: ltOut } = await runMinutes(["transcript", "--status", "--format", "json"], 5000);
+          const ltStatus = parseJsonOutput(ltOut);
+          if (ltStatus?.active) {
+            desktopLiveMsg = " A live transcript is streaming — use read_live_transcript to follow along.";
+          }
+        } catch { /* sidecar may not have started yet */ }
         return {
           content: [
             {
               type: "text" as const,
               text: result.recording
-                ? `Recording started in the running Minutes desktop app (PID: ${result.pid}).${Array.isArray(preflight.warnings) && preflight.warnings.length ? ` ${preflight.warnings[0]}` : ""} Say "stop recording" when done.`
+                ? `Recording started in the running Minutes desktop app (PID: ${result.pid}).${Array.isArray(preflight.warnings) && preflight.warnings.length ? ` ${preflight.warnings[0]}` : ""}${desktopLiveMsg} Say "stop recording" when done.`
                 : response.detail,
             },
           ],
@@ -732,12 +740,22 @@ server.tool(
     const { stdout: newStatus } = await runMinutes(["status"]);
     const result = parseJsonOutput(newStatus);
 
+    // Check if the live transcript sidecar started (may still be loading the whisper model)
+    let liveMsg = "";
+    try {
+      const { stdout: ltOut } = await runMinutes(["transcript", "--status", "--format", "json"], 5000);
+      const ltStatus = parseJsonOutput(ltOut);
+      if (ltStatus?.active) {
+        liveMsg = " A live transcript is streaming — use read_live_transcript to follow along.";
+      }
+    } catch { /* sidecar may not have started yet — omit the message */ }
+
     return {
       content: [
         {
           type: "text" as const,
           text: result.recording
-            ? `${result.recording_mode === "quick-thought" ? "Quick thought" : "Recording"} started (PID: ${result.pid}).${Array.isArray(preflight.warnings) && preflight.warnings.length ? ` ${preflight.warnings[0]}` : ""} Say "stop recording" when done.`
+            ? `${result.recording_mode === "quick-thought" ? "Quick thought" : "Recording"} started (PID: ${result.pid}).${Array.isArray(preflight.warnings) && preflight.warnings.length ? ` ${preflight.warnings[0]}` : ""}${liveMsg} Say "stop recording" when done.`
             : "Recording failed to start. Check `minutes logs` for details.",
         },
       ],
@@ -2100,7 +2118,7 @@ server.tool(
 
 server.tool(
   "start_live_transcript",
-  "Start a live transcript session. Records audio and transcribes in real-time, writing utterances to a JSONL file. Use read_live_transcript to read the transcript during the session. Runs until stop is called.",
+  "Start real-time transcription. If a recording is already running, it already includes a live transcript — use read_live_transcript to read it. Runs until stop is called.",
   {
     language: z.string().optional().describe("Transcription language code (e.g. 'en', 'ur', 'es', 'zh'). Overrides config.toml setting."),
   },
@@ -2114,7 +2132,7 @@ server.tool(
     const status = parseJsonOutput(statusOut);
     if (status.recording) {
       return {
-        content: [{ type: "text" as const, text: "Recording in progress — stop recording before starting live transcript." }],
+        content: [{ type: "text" as const, text: "Recording already in progress — it includes a live transcript. Use read_live_transcript to follow along." }],
       };
     }
 
@@ -2161,7 +2179,7 @@ server.tool(
 
 server.tool(
   "read_live_transcript",
-  "Read the live transcript. Returns utterances as JSON lines. Use 'since' to get only new lines since a cursor (line number) or time window (e.g., '5m', '30s'). Use 'status' mode to check if a session is active.",
+  "Read the live transcript — works during both recordings and live transcript sessions. Use 'since' to get new lines after a cursor (line number) or time window (e.g., '5m', '30s'). Use 'status' mode to check if a session is active.",
   {
     since: z.string().optional().describe("Line number (e.g., '42') or duration (e.g., '5m', '30s'). Omit to get all lines."),
     status_only: z.boolean().optional().default(false).describe("If true, return session status instead of transcript lines"),

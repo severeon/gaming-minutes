@@ -4337,7 +4337,17 @@ fn cmd_transcript(since: Option<&str>, status: bool, format: &str) -> Result<()>
             println!("{}", serde_json::to_string_pretty(&s)?);
         } else {
             if s.active {
-                eprintln!("Live transcript: ACTIVE (PID: {})", s.pid.unwrap_or(0));
+                let source_label = match s.source {
+                    Some(minutes_core::live_transcript::TranscriptSource::RecordingSidecar) => {
+                        " (from recording)"
+                    }
+                    _ => "",
+                };
+                eprintln!(
+                    "Live transcript: ACTIVE{} (PID: {})",
+                    source_label,
+                    s.pid.unwrap_or(0)
+                );
             } else {
                 eprintln!("Live transcript: inactive");
             }

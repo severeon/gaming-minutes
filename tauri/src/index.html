@@ -2861,6 +2861,23 @@
         </div>
       </div>
 
+      <!-- Command palette -->
+      <div style="margin-bottom: 16px;">
+        <div class="about-item-title">COMMAND PALETTE</div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Keyboard shortcut</div>
+            <select class="shortcut-select" id="settings-palette-shortcut-select" style="margin-top: 6px;">
+              <option value="CmdOrCtrl+Shift+K">Cmd+Shift+K</option>
+              <option value="CmdOrCtrl+Shift+O">Cmd+Shift+O</option>
+              <option value="CmdOrCtrl+Shift+U">Cmd+Shift+U</option>
+            </select>
+            <div class="about-controls-meta" id="settings-palette-shortcut-meta">Open the keyboard-first launcher from any app. Disable here if it conflicts with your IDE.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-palette-shortcut">Off</button>
+        </div>
+      </div>
+
       <!-- Transcription -->
       <div class="settings-section">
         <div class="about-item-title">TRANSCRIPTION</div>
@@ -3756,6 +3773,7 @@
           isLiveTranscript = false;
           callBanner.classList.remove('active');
           if (activeCallSession) activeCallSession.dismissed = true;
+          syncMeetingRecordButtons();
           footer.style.display = 'none';
           if (status.elapsed) recordingTime.textContent = status.elapsed;
           updateViz(status.audioLevel || 0);
@@ -3776,6 +3794,7 @@
           liveBar.classList.remove('active'); // T4
           isLiveTranscript = false;
           callBanner.classList.remove('active');
+          syncMeetingRecordButtons();
           footer.style.display = '';
           processingStage.textContent = status.processingStage || 'Preparing transcript...';
 
@@ -3843,6 +3862,7 @@
           if (activeCallSession && !activeCallSession.dismissed) {
             callBanner.classList.add('active');
           }
+          syncMeetingRecordButtons();
 
           // Clear processing elapsed timer
           if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
@@ -4187,9 +4207,31 @@
     });
 
     // ── Recording controls ──
+    async function startMeetingRecording(options = {}) {
+      const payload = {};
+      if (options.mode) payload.mode = options.mode;
+      if (options.title) payload.title = options.title;
+      if (options.language) payload.language = options.language;
+
+      const preferCallIntent =
+        options.mode !== 'quick-thought' &&
+        !options.intent &&
+        activeCallSession &&
+        !activeCallSession.dismissed &&
+        callBanner.classList.contains('active');
+
+      if (options.intent) {
+        payload.intent = options.intent;
+      } else if (preferCallIntent) {
+        payload.intent = 'call';
+      }
+
+      await invoke('cmd_start_recording', payload);
+    }
+
     document.getElementById('btn-record').addEventListener('click', async () => {
       try {
-        await invoke('cmd_start_recording');
+        await startMeetingRecording();
       } catch (e) {
         console.error('Record:', e);
       }
@@ -4989,15 +5031,18 @@
 
           document.getElementById('btn-record-upcoming').onclick = async () => {
             try {
-              await invoke('cmd_start_recording');
+              await startMeetingRecording();
             } catch (e) { console.error('Record:', e); }
           };
+          syncMeetingRecordButtons();
         } else {
           upcoming.style.display = 'none';
+          syncMeetingRecordButtons();
         }
       } catch (e) {
         // Calendar access may not be granted — silently hide
         document.getElementById('upcoming').style.display = 'none';
+        syncMeetingRecordButtons();
       }
     }
 
@@ -5201,6 +5246,19 @@
               applyDictationHotkeyStatus(restored);
             }
           }
+        }
+        // Re-fetch palette shortcut state from the backend on every
+        // settings overlay open. Codex pass 3 + claude pass 3 P2:
+        // the previous code only loaded palette state once at page
+        // bootstrap (~line 5050), so any setting change made via
+        // CLI, config edit, or another window left the overlay
+        // showing stale toggle state. Refreshing here keeps the
+        // overlay consistent with the live backend.
+        const paletteSettings = await invoke('cmd_palette_settings').catch(() => null);
+        if (paletteSettings) {
+          setSettingsToggle('settings-palette-shortcut', Boolean(paletteSettings.enabled));
+          const paletteSelect = document.getElementById('settings-palette-shortcut-select');
+          if (paletteSelect) paletteSelect.value = paletteSettings.shortcut;
         }
       } catch (e) { console.error('loadSettings:', e); }
       // Always load these, even if other settings fail
@@ -5507,6 +5565,58 @@
     invoke('cmd_live_shortcut_settings').then(settings => {
       setSettingsToggle('settings-live-shortcut', settings.enabled);
       const select = document.getElementById('settings-live-shortcut-select');
+      if (select) select.value = settings.shortcut;
+    }).catch(() => {});
+
+    // ── Command palette shortcut settings ──
+    function showPaletteShortcutMessage(text, isError) {
+      const meta = document.getElementById('settings-palette-shortcut-meta');
+      if (!meta) return;
+      meta.textContent = text;
+      meta.style.color = isError ? '#e5534b' : '';
+    }
+    document.getElementById('settings-palette-shortcut').addEventListener('click', async () => {
+      const select = document.getElementById('settings-palette-shortcut-select');
+      const currentEnabled = document.getElementById('settings-palette-shortcut').textContent === 'On';
+      try {
+        const settings = await invoke('cmd_set_palette_shortcut', {
+          enabled: !currentEnabled,
+          shortcut: select.value,
+        });
+        setSettingsToggle('settings-palette-shortcut', settings.enabled);
+        showPaletteShortcutMessage(
+          settings.enabled
+            ? 'Press the shortcut from any app to open the palette. Disable here if it conflicts.'
+            : 'Palette shortcut disabled. Re-enable any time.',
+          false
+        );
+      } catch (e) {
+        console.error('Palette shortcut:', e);
+        showPaletteShortcutMessage(String(e || 'Could not register shortcut.'), true);
+      }
+    });
+    document.getElementById('settings-palette-shortcut-select').addEventListener('change', async (e) => {
+      const enabled = document.getElementById('settings-palette-shortcut').textContent === 'On';
+      if (!enabled) return;
+      try {
+        const settings = await invoke('cmd_set_palette_shortcut', {
+          enabled: true,
+          shortcut: e.target.value,
+        });
+        setSettingsToggle('settings-palette-shortcut', settings.enabled);
+        showPaletteShortcutMessage(
+          'Press the shortcut from any app to open the palette. Disable here if it conflicts.',
+          false
+        );
+      } catch (e2) {
+        console.error('Palette shortcut change:', e2);
+        showPaletteShortcutMessage(String(e2 || 'Could not register shortcut.'), true);
+      }
+    });
+    // Load initial palette shortcut state
+    invoke('cmd_palette_settings').then(settings => {
+      setSettingsToggle('settings-palette-shortcut', settings.enabled);
+      const select = document.getElementById('settings-palette-shortcut-select');
       if (select) select.value = settings.shortcut;
     }).catch(() => {});
 
@@ -6463,6 +6573,19 @@
     const callHealthAudio = document.getElementById('call-health-audio');
     let activeCallSession = null;
 
+    function syncMeetingRecordButtons() {
+      const preferCallIntent =
+        activeCallSession &&
+        !activeCallSession.dismissed &&
+        callBanner.classList.contains('active');
+      document.getElementById('btn-record').textContent = preferCallIntent
+        ? 'Start Call Recording'
+        : 'Start Recording';
+      document.getElementById('btn-record-upcoming').textContent = preferCallIntent
+        ? 'Record Call'
+        : 'Record';
+    }
+
     function setCallHealthChip(node, text, live) {
       if (!node) return;
       node.textContent = text;
@@ -6481,6 +6604,7 @@
       setCallHealthChip(callHealthMic, 'Mic waiting', false);
       setCallHealthChip(callHealthAudio, 'Call audio waiting', false);
       callBanner.classList.add('active');
+      syncMeetingRecordButtons();
 
       // Only steal focus on first detection, not periodic reminders
       if (!is_reminder) {
@@ -6491,7 +6615,7 @@
 
     document.getElementById('btn-record-call').addEventListener('click', async () => {
       try {
-        await invoke('cmd_start_recording', { intent: 'call' });
+        await startMeetingRecording({ intent: 'call' });
       } catch (e) {
         console.error('Call recording:', e);
       }
@@ -6500,6 +6624,7 @@
     document.getElementById('btn-dismiss-call').addEventListener('click', () => {
       if (activeCallSession) activeCallSession.dismissed = true;
       callBanner.classList.remove('active');
+      syncMeetingRecordButtons();
     });
 
     currentWindow.listen('dictation-hotkey:status', (event) => {

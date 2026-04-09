@@ -1134,6 +1134,19 @@
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
+    .md-viewer-header-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+    }
+    .md-viewer-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
     .md-viewer-back {
       background: none;
       border: none;
@@ -1164,6 +1177,37 @@
     .md-viewer-content::-webkit-scrollbar { width: 5px; }
     .md-viewer-content::-webkit-scrollbar-track { background: transparent; }
     .md-viewer-content::-webkit-scrollbar-thumb { background: var(--surface-fill-strong); border-radius: 999px; }
+    .md-viewer-editor {
+      display: none;
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      resize: none;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: var(--text);
+      padding: 16px 20px;
+      box-sizing: border-box;
+      font: 13px/1.6 var(--font-mono);
+      white-space: pre-wrap;
+      overflow-y: auto;
+    }
+    .md-viewer-editor.active { display: block; }
+    .md-viewer-mode-btn.active {
+      background: var(--surface-fill-strong);
+      color: var(--text);
+      border-color: var(--border-strong);
+    }
+    .md-viewer-status {
+      font-size: 11px;
+      color: var(--text-secondary);
+      min-width: 88px;
+      text-align: right;
+    }
+    .md-viewer-status.unsaved { color: var(--amber); }
+    .md-viewer-status.saved { color: var(--green); }
+    .md-viewer-status.warning { color: var(--red); }
 
     /* Markdown rendered styles */
     .md-viewer-content h1,
@@ -2656,6 +2700,7 @@
         <div class="output-notice-path" id="output-notice-path"></div>
         <div class="output-notice-actions">
           <button class="btn btn-secondary btn-sm" id="btn-open-output">Open</button>
+          <button class="btn btn-secondary btn-sm" id="btn-draft-output">Create Draft</button>
           <button class="btn btn-secondary btn-sm" id="btn-open-output-folder">Show in Folder</button>
           <button class="btn btn-secondary btn-sm" id="btn-dismiss-output">Dismiss</button>
         </div>
@@ -2719,10 +2764,19 @@
   <!-- Markdown viewer (replaces meeting list when a file is open) -->
   <div class="md-viewer" id="md-viewer">
     <div class="md-viewer-header">
-      <button class="md-viewer-back" id="md-viewer-back" title="Back to meetings">←</button>
-      <span class="md-viewer-filename" id="md-viewer-filename"></span>
+      <div class="md-viewer-header-main">
+        <button class="md-viewer-back" id="md-viewer-back" title="Back to meetings">←</button>
+        <span class="md-viewer-filename" id="md-viewer-filename"></span>
+      </div>
+      <div class="md-viewer-toolbar">
+        <button class="btn btn-secondary btn-sm md-viewer-mode-btn active" id="md-viewer-preview-btn">Preview</button>
+        <button class="btn btn-secondary btn-sm md-viewer-mode-btn" id="md-viewer-source-btn">Source</button>
+        <button class="btn btn-secondary btn-sm" id="md-viewer-save-btn" disabled>Save</button>
+        <span class="md-viewer-status" id="md-viewer-status">Viewing</span>
+      </div>
     </div>
     <div class="md-viewer-content" id="md-viewer-content"></div>
+    <textarea class="md-viewer-editor" id="md-viewer-editor" spellcheck="false"></textarea>
   </div>
 
   <!-- Meeting list -->
@@ -2797,6 +2851,7 @@
           <div class="detail-meta" id="detail-meta"></div>
         </div>
         <div class="detail-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-create-artifact">Create Draft</button>
           <button class="btn btn-primary btn-sm" id="btn-discuss-ai">Discuss with Agent</button>
           <button class="btn btn-secondary btn-sm" id="btn-open-external">Open in Editor</button>
           <button class="btn btn-danger btn-sm" id="btn-delete-meeting">Delete</button>
@@ -4015,8 +4070,10 @@
 
     function updateOutputNotice(notice) {
       latestOutput = notice || null;
+      const draftButton = document.getElementById('btn-draft-output');
       if (!notice) {
         outputNotice.classList.remove('active', 'capture');
+        if (draftButton) draftButton.style.display = 'none';
         lastOutputKey = null;
         return;
       }
@@ -4034,6 +4091,9 @@
       outputNoticeDetail.textContent = notice.detail || '';
       outputNoticePath.textContent = notice.path || '';
       document.getElementById('btn-open-output').textContent = isCapture ? 'Open Capture' : 'Open Meeting';
+      if (draftButton) {
+        draftButton.style.display = notice.kind === 'saved' ? '' : 'none';
+      }
     }
 
     function setNotificationToggle(enabled) {
@@ -4457,6 +4517,11 @@
       }
     });
 
+    document.getElementById('btn-draft-output').addEventListener('click', async () => {
+      if (!latestOutput?.path) return;
+      await createArtifactFromMeetingPath(latestOutput.path, 'debrief-memo');
+    });
+
     document.getElementById('btn-open-output-folder').addEventListener('click', async () => {
       if (!latestOutput?.path) return;
       try {
@@ -4474,6 +4539,11 @@
       } catch (e) {
         console.error('Dismiss output:', e);
       }
+    });
+
+    document.getElementById('btn-create-artifact').addEventListener('click', async () => {
+      if (!currentMeetingDetail?.path) return;
+      await createArtifactFromMeetingPath(currentMeetingDetail.path, 'debrief-memo');
     });
 
     readinessButton.addEventListener('click', () => {
@@ -6925,14 +6995,21 @@
     // ══════════════════════════════════════════════════════════════
     const mdViewer = document.getElementById('md-viewer');
     const mdViewerContent = document.getElementById('md-viewer-content');
+    const mdViewerEditor = document.getElementById('md-viewer-editor');
     const mdViewerFilename = document.getElementById('md-viewer-filename');
-    // meetingsScroll already declared above
+    const mdViewerPreviewBtn = document.getElementById('md-viewer-preview-btn');
+    const mdViewerSourceBtn = document.getElementById('md-viewer-source-btn');
+    const mdViewerSaveBtn = document.getElementById('md-viewer-save-btn');
+    const mdViewerStatus = document.getElementById('md-viewer-status');
+    // meetingsScroll and footer already declared above
     const mdSearchWrap = document.querySelector('.search-wrap');
-    const mdFooter = document.getElementById('footer');
     let openArtifactPath = null;
     let openArtifactContent = null;
     let openArtifactPollTimer = null;
     let openArtifactLastError = null;
+    let openArtifactDirty = false;
+    let openArtifactSaving = false;
+    let mdViewerMode = 'preview';
 
     marked.setOptions({ breaks: true });
 
@@ -6980,6 +7057,45 @@
       }
     }
 
+    function setMdViewerStatus(text, tone = '') {
+      mdViewerStatus.textContent = text;
+      mdViewerStatus.className = 'md-viewer-status';
+      if (tone) mdViewerStatus.classList.add(tone);
+    }
+
+    function currentArtifactBuffer() {
+      return mdViewerMode === 'source' ? mdViewerEditor.value : (openArtifactContent || '');
+    }
+
+    function refreshMdViewerChrome() {
+      const sourceMode = mdViewerMode === 'source';
+      mdViewerPreviewBtn.classList.toggle('active', !sourceMode);
+      mdViewerSourceBtn.classList.toggle('active', sourceMode);
+      mdViewerContent.style.display = sourceMode ? 'none' : 'block';
+      mdViewerEditor.classList.toggle('active', sourceMode);
+      mdViewerSaveBtn.disabled = !openArtifactDirty || openArtifactSaving || !openArtifactPath;
+
+      if (openArtifactSaving) {
+        setMdViewerStatus('Saving...', 'saved');
+      } else if (openArtifactDirty) {
+        setMdViewerStatus('Unsaved', 'unsaved');
+      } else if (sourceMode) {
+        setMdViewerStatus('Editing');
+      } else {
+        setMdViewerStatus('Viewing');
+      }
+    }
+
+    function setMdViewerMode(mode) {
+      mdViewerMode = mode === 'source' ? 'source' : 'preview';
+      if (mdViewerMode === 'source') {
+        if (!openArtifactDirty) mdViewerEditor.value = openArtifactContent || '';
+      } else {
+        rerenderOpenArtifact(currentArtifactBuffer(), { preserveScroll: true });
+      }
+      refreshMdViewerChrome();
+    }
+
     function rerenderOpenArtifact(markdownText, { preserveScroll = false } = {}) {
       const previousScrollTop = preserveScroll ? mdViewerContent.scrollTop : 0;
       renderMarkdownToElement(mdViewerContent, markdownText);
@@ -6992,12 +7108,21 @@
 
     async function refreshOpenArtifactIfChanged() {
       if (!openArtifactPath || !mdViewer.classList.contains('active')) return;
+      if (openArtifactSaving) return;
       try {
         const content = await invoke('cmd_read_text_file', { path: openArtifactPath });
         openArtifactLastError = null;
         if (content !== openArtifactContent) {
+          if (openArtifactDirty) {
+            setMdViewerStatus('Local edits pause refresh', 'unsaved');
+            return;
+          }
           openArtifactContent = content;
+          if (mdViewerMode === 'source') {
+            mdViewerEditor.value = content;
+          }
           rerenderOpenArtifact(content, { preserveScroll: true });
+          refreshMdViewerChrome();
         }
       } catch (e) {
         const nextError = String(e);
@@ -7015,25 +7140,66 @@
       }, 1000);
     }
 
-    async function showMdViewer(path, filename, markdownText) {
+    async function saveOpenArtifact() {
+      if (!openArtifactPath || !openArtifactDirty || openArtifactSaving) return;
+      openArtifactSaving = true;
+      refreshMdViewerChrome();
+      try {
+        const nextContent = mdViewerEditor.value;
+        await invoke('cmd_write_text_file', { path: openArtifactPath, content: nextContent });
+        openArtifactContent = nextContent;
+        openArtifactDirty = false;
+        if (mdViewerMode === 'preview') {
+          rerenderOpenArtifact(nextContent, { preserveScroll: true });
+        }
+        setMdViewerStatus('Saved', 'saved');
+      } catch (e) {
+        console.error('Save artifact:', e);
+        setMdViewerStatus('Save failed', 'warning');
+      } finally {
+        openArtifactSaving = false;
+        refreshMdViewerChrome();
+      }
+    }
+
+    async function showMdViewer(path, filename, markdownText, options = {}) {
+      if (
+        mdViewer.classList.contains('active') &&
+        openArtifactDirty &&
+        openArtifactPath &&
+        openArtifactPath !== path &&
+        !confirm('Discard unsaved changes to the current artifact?')
+      ) {
+        return false;
+      }
+      const initialMode = options.mode === 'source' ? 'source' : 'preview';
       openArtifactPath = path;
       openArtifactContent = markdownText;
       openArtifactLastError = null;
+      openArtifactDirty = false;
+      openArtifactSaving = false;
+      mdViewerMode = initialMode;
       mdViewerFilename.textContent = filename;
       rerenderOpenArtifact(markdownText);
+      mdViewerEditor.value = markdownText;
       mdViewer.classList.add('active');
       meetingsScroll.style.display = 'none';
       mdSearchWrap.style.display = 'none';
-      mdFooter.style.display = 'none';
+      footer.style.display = 'none';
+      refreshMdViewerChrome();
       startOpenArtifactPolling();
       try {
         await invoke('cmd_set_open_artifact', { path });
       } catch (e) {
         console.error('Set open artifact:', e);
       }
+      return true;
     }
 
     async function hideMdViewer() {
+      if (openArtifactDirty && !confirm('Discard unsaved changes to this artifact?')) {
+        return;
+      }
       if (openArtifactPollTimer) {
         clearInterval(openArtifactPollTimer);
         openArtifactPollTimer = null;
@@ -7041,16 +7207,51 @@
       openArtifactPath = null;
       openArtifactContent = null;
       openArtifactLastError = null;
+      openArtifactDirty = false;
+      openArtifactSaving = false;
+      mdViewerMode = 'preview';
       mdViewer.classList.remove('active');
       meetingsScroll.style.display = '';
       mdSearchWrap.style.display = '';
-      mdFooter.style.display = '';
+      footer.style.display = '';
       mdViewerFilename.textContent = '';
       mdViewerContent.textContent = '';
+      mdViewerEditor.value = '';
+      refreshMdViewerChrome();
       try {
         await invoke('cmd_clear_open_artifact');
       } catch (e) {
         console.error('Clear open artifact:', e);
+      }
+    }
+
+    async function requestArtifactTemplateKind(defaultKind = 'debrief-memo') {
+      const choice = window.prompt(
+        'Create draft type: debrief-memo, follow-up-email, meeting-brief',
+        defaultKind
+      );
+      if (!choice) return null;
+      const normalized = choice.trim().toLowerCase();
+      if (!['debrief-memo', 'follow-up-email', 'meeting-brief'].includes(normalized)) {
+        alert('Use one of: debrief-memo, follow-up-email, meeting-brief');
+        return null;
+      }
+      return normalized;
+    }
+
+    async function createArtifactFromMeetingPath(meetingPath, defaultKind = 'debrief-memo') {
+      if (!meetingPath) return;
+      const kind = await requestArtifactTemplateKind(defaultKind);
+      if (!kind) return;
+      try {
+        const draft = await invoke('cmd_create_artifact_from_meeting', { meetingPath, kind });
+        const filename = draft.path.split(/[\\/]/).pop() || draft.path;
+        const shown = await showMdViewer(draft.path, filename, draft.content, { mode: 'source' });
+        if (!shown) return;
+        showDetailFeedback(`Created ${draft.templateKind.replaceAll('-', ' ')} draft`, 'success');
+      } catch (e) {
+        console.error('Create artifact:', e);
+        showDetailFeedback(`Could not create draft: ${e}`, 'error');
       }
     }
 
@@ -7074,6 +7275,13 @@
 
     document.getElementById('btn-open-md').addEventListener('click', openMarkdownFile);
     document.getElementById('md-viewer-back').addEventListener('click', () => { hideMdViewer(); });
+    mdViewerPreviewBtn.addEventListener('click', () => setMdViewerMode('preview'));
+    mdViewerSourceBtn.addEventListener('click', () => setMdViewerMode('source'));
+    mdViewerSaveBtn.addEventListener('click', saveOpenArtifact);
+    mdViewerEditor.addEventListener('input', () => {
+      openArtifactDirty = mdViewerEditor.value !== (openArtifactContent || '');
+      refreshMdViewerChrome();
+    });
     mdViewerContent.addEventListener('click', async (event) => {
       const anchor = event.target.closest('a[href]');
       if (!anchor) return;
@@ -7096,6 +7304,12 @@
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || editable || inTerminal) return;
         e.preventDefault();
         openMarkdownFile();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 's' && mdViewer.classList.contains('active')) {
+        const inTerminal = document.activeElement?.closest('.recall-terminal');
+        if (inTerminal) return;
+        e.preventDefault();
+        saveOpenArtifact();
       }
     });
 

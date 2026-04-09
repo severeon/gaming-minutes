@@ -151,6 +151,15 @@ pub struct MeetingDetail {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactDraft {
+    pub path: String,
+    pub title: String,
+    pub template_kind: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OutputNotice {
     pub kind: String,
     pub title: String,
@@ -222,6 +231,32 @@ fn processing_job_view(job: minutes_core::jobs::ProcessingJob) -> ProcessingJobV
         finished_at: job.finished_at.map(|ts| ts.to_rfc3339()),
         word_count: job.word_count,
     }
+}
+
+fn artifact_slug(text: &str) -> String {
+    let mut slug = String::new();
+    let mut previous_dash = false;
+    for ch in text.chars() {
+        let lower = ch.to_ascii_lowercase();
+        if lower.is_ascii_alphanumeric() {
+            slug.push(lower);
+            previous_dash = false;
+        } else if !previous_dash {
+            slug.push('-');
+            previous_dash = true;
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+fn resolve_unique_path(dir: &Path, stem: &str, extension: &str) -> PathBuf {
+    let mut candidate = dir.join(format!("{stem}.{extension}"));
+    let mut suffix = 2u32;
+    while candidate.exists() {
+        candidate = dir.join(format!("{stem}-{suffix}.{extension}"));
+        suffix += 1;
+    }
+    candidate
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1292,6 +1327,191 @@ fn parse_sections(body: &str) -> Vec<MeetingSection> {
     }
 
     sections
+}
+
+fn find_section_content<'a>(sections: &'a [MeetingSection], heading: &str) -> Option<&'a str> {
+    sections
+        .iter()
+        .find(|section| section.heading.eq_ignore_ascii_case(heading))
+        .map(|section| section.content.as_str())
+        .filter(|content| !content.trim().is_empty())
+}
+
+fn artifact_directory(config: &Config) -> Result<PathBuf, String> {
+    let workspace = crate::context::create_workspace(config)?;
+    let artifacts = workspace.join("artifacts");
+    std::fs::create_dir_all(&artifacts).map_err(|e| {
+        format!(
+            "Failed to create artifact directory {}: {}",
+            artifacts.display(),
+            e
+        )
+    })?;
+    Ok(artifacts)
+}
+
+fn create_text_file_snapshot(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let original = std::fs::read_to_string(path)
+        .map_err(|e| format!("Cannot snapshot {}: {}", path.display(), e))?;
+    let snapshot_root = Config::minutes_dir().join("artifact-snapshots");
+    std::fs::create_dir_all(&snapshot_root).map_err(|e| {
+        format!(
+            "Failed to create artifact snapshot directory {}: {}",
+            snapshot_root.display(),
+            e
+        )
+    })?;
+
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let base = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("artifact");
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("md");
+    let snapshot_path = snapshot_root.join(format!("{timestamp}-{base}.{extension}"));
+    std::fs::write(&snapshot_path, original).map_err(|e| {
+        format!(
+            "Failed to write artifact snapshot {}: {}",
+            snapshot_path.display(),
+            e
+        )
+    })
+}
+
+fn write_text_file_atomic(path: &Path, content: &str) -> Result<(), String> {
+    if content.len() > 1_048_576 {
+        return Err("Refusing to save a text file larger than 1 MB.".into());
+    }
+    create_text_file_snapshot(path)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("Invalid file name: {}", path.display()))?;
+    let temp_path = path.with_file_name(format!(".{}.tmp", file_name));
+    std::fs::write(&temp_path, content)
+        .map_err(|e| format!("Failed to write temp file {}: {}", temp_path.display(), e))?;
+    std::fs::rename(&temp_path, path).map_err(|e| {
+        format!(
+            "Failed to atomically replace {} with {}: {}",
+            path.display(),
+            temp_path.display(),
+            e
+        )
+    })
+}
+
+fn meeting_section_bullets(content: Option<&str>, empty: &str) -> String {
+    content
+        .map(|text| {
+            text.lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| empty.to_string())
+}
+
+fn build_artifact_template(
+    frontmatter: &minutes_core::markdown::Frontmatter,
+    sections: &[MeetingSection],
+    meeting_path: &Path,
+    kind: &str,
+) -> Result<(String, String), String> {
+    let meeting_title = frontmatter.title.trim();
+    let slug = artifact_slug(meeting_title);
+    let title = match kind {
+        "follow-up-email" => format!("Follow-up Email - {}", meeting_title),
+        "meeting-brief" => format!("Meeting Brief - {}", meeting_title),
+        "debrief-memo" => format!("Debrief Memo - {}", meeting_title),
+        other => {
+            return Err(format!(
+            "Unknown artifact template '{}'. Use follow-up-email, meeting-brief, or debrief-memo.",
+            other
+        ))
+        }
+    };
+
+    let summary = meeting_section_bullets(
+        find_section_content(sections, "Summary"),
+        "- Add a concise recap of what happened.\n- Pull the strongest 2-3 moments from the meeting.",
+    );
+    let decisions = if frontmatter.decisions.is_empty() {
+        "- Add any decisions that should carry forward.".to_string()
+    } else {
+        frontmatter
+            .decisions
+            .iter()
+            .map(|decision| format!("- {}", decision.text))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let action_items = if frontmatter.action_items.is_empty() {
+        "- Add the next actions and owners.".to_string()
+    } else {
+        frontmatter
+            .action_items
+            .iter()
+            .map(|item| {
+                let due = item
+                    .due
+                    .as_ref()
+                    .map(|value| format!(" (due {})", value))
+                    .unwrap_or_default();
+                format!("- {}: {}{}", item.assignee, item.task, due)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let open_questions = meeting_section_bullets(
+        find_section_content(sections, "Open Questions"),
+        "- Add unresolved questions worth carrying into the next conversation.",
+    );
+    let attendees = if frontmatter.attendees.is_empty() {
+        "_Add attendees if needed._".to_string()
+    } else {
+        frontmatter.attendees.join(", ")
+    };
+
+    let frontmatter_block = format!(
+        "---\ntitle: {}\nartifact_type: {}\nsource_meeting: {}\nsource_title: {}\nsource_date: {}\nlinked_slug: {}\n---\n\n",
+        title,
+        kind,
+        meeting_path.display(),
+        meeting_title,
+        frontmatter.date.to_rfc3339(),
+        slug
+    );
+
+    let body = match kind {
+        "follow-up-email" => format!(
+            "# Subject\n\nFollow-up: {meeting_title}\n\n# Email Draft\n\nHi team,\n\nThanks again for the conversation today. Here is the clean follow-up from the meeting.\n\n## Key Points\n\n{summary}\n\n## Decisions\n\n{decisions}\n\n## Action Items\n\n{action_items}\n\n## Open Questions\n\n{open_questions}\n\nBest,\n\n[Your name]\n"
+        ),
+        "meeting-brief" => format!(
+            "# Objective\n\nState what this next meeting needs to accomplish.\n\n## Context\n\n- Source meeting: [{meeting_title}]({})\n- Attendees: {attendees}\n\n## What Happened Last Time\n\n{summary}\n\n## Decisions Already Made\n\n{decisions}\n\n## Open Questions\n\n{open_questions}\n\n## Suggested Agenda\n\n- Start with the highest-stakes question\n- Confirm any blocked action items\n- End with explicit owners and dates\n\n## Notes\n\n- Add prep notes here.\n",
+            meeting_path.display()
+        ),
+        "debrief-memo" => format!(
+            "# Summary\n\n{summary}\n\n## Decisions\n\n{decisions}\n\n## Action Items\n\n{action_items}\n\n## Open Questions\n\n{open_questions}\n\n## Next Move\n\n- Write the next action the team should take from this conversation.\n"
+        ),
+        _ => unreachable!(),
+    };
+
+    Ok((title, format!("{frontmatter_block}{body}")))
 }
 
 fn model_status(config: &Config) -> ReadinessItem {
@@ -3092,6 +3312,51 @@ pub fn cmd_get_meeting_detail(path: String) -> Result<MeetingDetail, String> {
 }
 
 #[tauri::command]
+pub fn cmd_write_text_file(path: String, content: String) -> Result<String, String> {
+    let canonical = validate_text_file_path(Path::new(&path))?;
+    write_text_file_atomic(&canonical, &content)?;
+    Ok(format!("Saved {}", canonical.display()))
+}
+
+#[tauri::command]
+pub fn cmd_create_artifact_from_meeting(
+    meeting_path: String,
+    kind: String,
+) -> Result<ArtifactDraft, String> {
+    let config = Config::load();
+    let meeting_path = PathBuf::from(&meeting_path);
+    minutes_core::notes::validate_meeting_path(&meeting_path, &config.output_dir)?;
+
+    let content = std::fs::read_to_string(&meeting_path)
+        .map_err(|e| format!("Cannot read meeting: {}", e))?;
+    let (frontmatter_str, body) = minutes_core::markdown::split_frontmatter(&content);
+    let frontmatter: minutes_core::markdown::Frontmatter =
+        serde_yaml::from_str(frontmatter_str.trim())
+            .map_err(|e| format!("Bad frontmatter: {}", e))?;
+    let sections = parse_sections(body);
+
+    let artifacts_dir = artifact_directory(&config)?;
+    let template_kind = kind.trim().to_ascii_lowercase();
+    let (title, artifact_content) =
+        build_artifact_template(&frontmatter, &sections, &meeting_path, &template_kind)?;
+    let stem = format!(
+        "{}-{}-{}",
+        chrono::Local::now().format("%Y-%m-%d"),
+        template_kind,
+        artifact_slug(&frontmatter.title)
+    );
+    let artifact_path = resolve_unique_path(&artifacts_dir, &stem, "md");
+    write_text_file_atomic(&artifact_path, &artifact_content)?;
+
+    Ok(ArtifactDraft {
+        path: artifact_path.display().to_string(),
+        title,
+        template_kind,
+        content: artifact_content,
+    })
+}
+
+#[tauri::command]
 pub async fn cmd_list_voices() -> Result<serde_json::Value, String> {
     let conn = minutes_core::voice::open_db().map_err(|e| e.to_string())?;
     let profiles = minutes_core::voice::list_profiles(&conn).map_err(|e| e.to_string())?;
@@ -3947,6 +4212,59 @@ mod tests {
         let current = latest_output.lock().unwrap().clone().unwrap();
         assert_eq!(current.title, "Demo");
         assert_eq!(current.path, "/tmp/demo.md");
+    }
+
+    #[test]
+    fn build_artifact_template_includes_meeting_metadata() {
+        let fm = minutes_core::markdown::Frontmatter {
+            title: "Pricing Review".into(),
+            r#type: ContentType::Meeting,
+            date: chrono::Local::now(),
+            duration: "30m".into(),
+            source: None,
+            status: Some(minutes_core::markdown::OutputStatus::Complete),
+            tags: vec![],
+            attendees: vec!["Mat".into(), "Alex".into()],
+            attendees_raw: None,
+            calendar_event: None,
+            people: vec![],
+            entities: minutes_core::markdown::EntityLinks::default(),
+            device: None,
+            captured_at: None,
+            context: None,
+            action_items: vec![minutes_core::markdown::ActionItem {
+                assignee: "Mat".into(),
+                task: "Send follow-up".into(),
+                due: Some("Friday".into()),
+                status: "open".into(),
+            }],
+            decisions: vec![minutes_core::markdown::Decision {
+                text: "Ship the new pricing page".into(),
+                topic: Some("pricing".into()),
+            }],
+            intents: vec![],
+            recorded_by: None,
+            visibility: None,
+            speaker_map: vec![],
+            filter_diagnosis: None,
+        };
+        let sections = vec![MeetingSection {
+            heading: "Summary".into(),
+            content: "- We aligned on pricing changes.".into(),
+        }];
+
+        let (title, body) = build_artifact_template(
+            &fm,
+            &sections,
+            Path::new("/tmp/pricing-review.md"),
+            "debrief-memo",
+        )
+        .unwrap();
+
+        assert!(title.contains("Pricing Review"));
+        assert!(body.contains("source_meeting: /tmp/pricing-review.md"));
+        assert!(body.contains("Ship the new pricing page"));
+        assert!(body.contains("Mat: Send follow-up"));
     }
 
     #[test]

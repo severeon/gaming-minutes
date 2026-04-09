@@ -1280,6 +1280,8 @@ fn main() {
             commands::cmd_extend_recording,
             commands::cmd_open_file,
             commands::cmd_read_text_file,
+            commands::cmd_write_text_file,
+            commands::cmd_create_artifact_from_meeting,
             commands::cmd_set_open_artifact,
             commands::cmd_clear_open_artifact,
             commands::cmd_clear_latest_output,

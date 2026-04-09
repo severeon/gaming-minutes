@@ -5,43 +5,193 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Minutes</title>
   <style>
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: normal;
+      font-weight: 400;
+      src: url('fonts/InstrumentSerif-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-weight: 400;
+      src: url('fonts/InstrumentSerif-Italic.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Geist';
+      font-style: normal;
+      font-weight: 400;
+      src: url('fonts/Geist-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Geist';
+      font-style: normal;
+      font-weight: 500;
+      src: url('fonts/Geist-Medium.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Geist';
+      font-style: normal;
+      font-weight: 600;
+      src: url('fonts/Geist-SemiBold.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Geist Mono';
+      font-style: normal;
+      font-weight: 400;
+      src: url('fonts/GeistMono-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Geist Mono';
+      font-style: normal;
+      font-weight: 500;
+      src: url('fonts/GeistMono-Medium.woff2') format('woff2');
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
-      --bg: #1c1c1e;
-      --bg-elevated: #2c2c2e;
-      --bg-hover: #3e3e42;
-      --border: #38383a;
-      --text: #f5f5f7;
-      --text-secondary: #98989d;
-      --text-tertiary: #636366;
-      --accent: #6391b3;
-      --accent-hover: #7ba3c0;
-      --red: #e5534b;
-      --red-bg: rgba(229, 83, 75, 0.12);
-      --green: #46c072;
-      --live: #34c759;
-      --purple: #9b85c4;
-      --orange: #d4a03c;
-      --radius: 8px;
-      --radius-lg: 10px;
-      --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
-      --font-display: ui-serif, 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
-      --font-mono: 'SF Mono', 'Menlo', monospace;
+      color-scheme: light dark;
+      --bg:          #0D0D0B;
+      --bg-elevated: #141412;
+      --bg-hover:    #1C1C1A;
+      --border:      rgba(255,255,255,0.06);
+      --border-mid:  #2A2924;
+      --text:        #E8E4DA;
+      --text-secondary: #6B6760;
+      --text-tertiary:  #3D3B38;
+      --accent:      #30D158;
+      --accent-hover: #4ADE70;
+      --accent-soft: rgba(48,209,88,0.10);
+      --red:         #FF453A;
+      --red-bg:      rgba(255,69,58,0.12);
+      --green:       #30D158;
+      --live:        #30D158;
+      --purple:      #BF5AF2;
+      --orange:      #D4832A;
+      --purple-solid-soft: rgba(155,133,196,0.70);
+      --purple-solid-strong: rgba(155,133,196,0.85);
+      --accent-tint: rgba(48,209,88,0.12);
+      --accent-tint-soft: rgba(48,209,88,0.06);
+      --accent-border: rgba(48,209,88,0.15);
+      --accent-border-strong: rgba(48,209,88,0.40);
+      --green-tint: rgba(48,209,88,0.12);
+      --green-tint-soft: rgba(48,209,88,0.06);
+      --green-border: rgba(48,209,88,0.12);
+      --green-border-soft: rgba(48,209,88,0.08);
+      --green-glow: rgba(48,209,88,0.28);
+      --green-glow-soft: rgba(48,209,88,0.18);
+      --green-solid-soft: rgba(48,209,88,0.70);
+      --green-solid-strong: rgba(48,209,88,0.85);
+      --red-tint: rgba(255,69,58,0.12);
+      --red-tint-soft: rgba(255,69,58,0.06);
+      --red-border: rgba(255,69,58,0.10);
+      --red-border-strong: rgba(255,69,58,0.30);
+      --red-border-stronger: rgba(255,69,58,0.50);
+      --red-tint-strong: rgba(255,69,58,0.20);
+      --red-tint-stronger: rgba(255,69,58,0.25);
+      --red-glow-soft: rgba(255,69,58,0.04);
+      --orange-tint: rgba(212,160,60,0.12);
+      --orange-tint-soft: rgba(212,160,60,0.08);
+      --orange-border: rgba(212,160,60,0.16);
+      --shadow-color: rgba(0,0,0,0.34);
+      --shadow-soft: rgba(0,0,0,0.12);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --shadow-stronger: rgba(0,0,0,0.42);
+      --inset-highlight: rgba(255,255,255,0.04);
+      --surface-stroke-subtle: rgba(255,255,255,0.04);
+      --surface-fill: rgba(255,255,255,0.03);
+      --surface-fill-hover: rgba(255,255,255,0.05);
+      --surface-fill-strong: rgba(255,255,255,0.08);
+      --surface-fill-stronger: rgba(255,255,255,0.14);
+      --surface-fill-strongest: rgba(255,255,255,0.25);
+      --surface-fill-strongest-hover: rgba(255,255,255,0.35);
+      --neutral-tint: rgba(255,255,255,0.06);
+      --neutral-tint-soft: rgba(255,255,255,0.05);
+      --neutral-border: rgba(255,255,255,0.08);
+      --overlay-scrim: rgba(10,10,12,0.68);
+      --modal-scrim: rgba(8,10,16,0.66);
+      --focus-ring: rgba(48,209,88,0.20);
+      --focus-ring-soft: rgba(48,209,88,0.12);
+      --focus-ring-subtle: rgba(48,209,88,0.08);
+      --info-ring: rgba(98,188,233,0.35);
+      --muted-badge: rgba(142,142,147,0.15);
+      --success-contrast: #0D0D0B;
+      --radius:      8px;
+      --radius-lg:   10px;
+      --font-sans:   'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-display: 'Instrument Serif', ui-serif, 'Iowan Old Style', Georgia, serif;
+      --font-mono:   'Geist Mono', 'SF Mono', 'Menlo', monospace;
+    }
 
-      /* Spacing scale — use these in lieu of magic numbers */
-      --s-1: 4px;
-      --s-2: 8px;
-      --s-3: 12px;
-      --s-4: 16px;
-      --s-5: 20px;
-      --s-6: 24px;
-
-      /* Standard easing */
-      --ease-out-quart: cubic-bezier(0.32, 0.72, 0, 1);
-      --duration-fast: 140ms;
-      --duration-base: 220ms;
-      --duration-slow: 320ms;
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg:             #F8F4ED;
+        --bg-elevated:    #EFEBE2;
+        --bg-hover:       #E8E2D8;
+        --border:         rgba(0,0,0,0.07);
+        --border-mid:     rgba(0,0,0,0.13);
+        --text:           #1A1916;
+        --text-secondary: #8C8880;
+        --text-tertiary:  #BDB9B0;
+        --accent:         #C96B4E;
+        --accent-hover:   #B85A3E;
+        --accent-soft:    rgba(201,107,78,0.10);
+        --red:            #C0392B;
+        --red-bg:         rgba(192,57,43,0.12);
+        --green:          #2E7D46;
+        --live:           #2E7D46;
+        --purple:         #8B5CF6;
+        --orange:         #B8731E;
+        --purple-solid-soft: rgba(139,92,246,0.58);
+        --purple-solid-strong: rgba(139,92,246,0.72);
+        --accent-tint: rgba(201,107,78,0.10);
+        --accent-tint-soft: rgba(201,107,78,0.05);
+        --accent-border: rgba(201,107,78,0.15);
+        --accent-border-strong: rgba(201,107,78,0.28);
+        --green-tint: rgba(46,125,70,0.10);
+        --green-tint-soft: rgba(46,125,70,0.06);
+        --green-border: rgba(46,125,70,0.14);
+        --green-border-soft: rgba(46,125,70,0.10);
+        --green-glow: rgba(46,125,70,0.22);
+        --green-glow-soft: rgba(46,125,70,0.14);
+        --green-solid-soft: rgba(46,125,70,0.72);
+        --green-solid-strong: rgba(46,125,70,0.84);
+        --red-tint: rgba(192,57,43,0.10);
+        --red-tint-soft: rgba(192,57,43,0.05);
+        --red-border: rgba(192,57,43,0.10);
+        --red-border-strong: rgba(192,57,43,0.24);
+        --red-border-stronger: rgba(192,57,43,0.38);
+        --red-tint-strong: rgba(192,57,43,0.15);
+        --red-tint-stronger: rgba(192,57,43,0.20);
+        --red-glow-soft: rgba(192,57,43,0.06);
+        --orange-tint: rgba(184,115,30,0.10);
+        --orange-tint-soft: rgba(184,115,30,0.06);
+        --orange-border: rgba(184,115,30,0.16);
+        --shadow-color: rgba(0,0,0,0.12);
+        --shadow-soft: rgba(0,0,0,0.08);
+        --shadow-strong: rgba(0,0,0,0.16);
+        --shadow-stronger: rgba(0,0,0,0.18);
+        --inset-highlight: rgba(0,0,0,0.03);
+        --surface-stroke-subtle: rgba(0,0,0,0.06);
+        --surface-fill: rgba(0,0,0,0.03);
+        --surface-fill-hover: rgba(0,0,0,0.05);
+        --surface-fill-strong: rgba(0,0,0,0.08);
+        --surface-fill-stronger: rgba(0,0,0,0.12);
+        --surface-fill-strongest: rgba(0,0,0,0.18);
+        --surface-fill-strongest-hover: rgba(0,0,0,0.24);
+        --neutral-tint: rgba(0,0,0,0.06);
+        --neutral-tint-soft: rgba(0,0,0,0.04);
+        --neutral-border: rgba(0,0,0,0.10);
+        --overlay-scrim: rgba(248,244,237,0.78);
+        --modal-scrim: rgba(248,244,237,0.82);
+        --focus-ring: rgba(201,107,78,0.16);
+        --focus-ring-soft: rgba(201,107,78,0.10);
+        --focus-ring-subtle: rgba(201,107,78,0.07);
+        --info-ring: rgba(98,188,233,0.24);
+        --muted-badge: rgba(140,136,128,0.16);
+        --success-contrast: #F8F4ED;
+      }
     }
 
     :focus-visible {
@@ -51,16 +201,9 @@
 
     html { background: transparent; }
 
-    /* The body sits on top of the macOS vibrancy material applied by Tauri.
-       Without a CSS layer here the entire left panel would be pure vibrancy,
-       which is "dark frosted glass" against dark wallpapers but washes out to
-       light gray over bright apps (Slack, Notion in light mode, etc.).
-       A 78% opaque dark layer guarantees white text contrast regardless of
-       what's behind the window, while still letting ~22% vibrancy bleed
-       through so the surface keeps that "alive" frosted-glass feel. */
     body {
       font-family: var(--font-sans);
-      background: rgba(22, 22, 24, 0.78);
+      background: transparent;
       color: var(--text);
       height: 100vh;
       display: flex;
@@ -70,17 +213,14 @@
       user-select: none;
     }
 
-    /* Subtle grain overlay for depth — barely perceptible, adds warmth to flat surfaces.
-       Was 0.020 when body was transparent and the grain rode on vibrancy; now that
-       body is 78% opaque dark the grain has more contrast against it, so the same
-       perceived intensity comes from a smaller alpha. */
+    /* Subtle grain overlay for depth — barely perceptible, adds warmth to flat surfaces */
     body::after {
       content: '';
       position: fixed;
       inset: 0;
       pointer-events: none;
       z-index: 9999;
-      opacity: 0.014;
+      opacity: 0.020;
       background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
       background-repeat: repeat;
       background-size: 256px;
@@ -93,7 +233,7 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      border-right: 1px solid rgba(255,255,255,0.04);
+      border-right: 1px solid var(--surface-stroke-subtle);
     }
 
     /* ── Recall panel (right side) ── */
@@ -103,44 +243,29 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      border-left: 1px solid rgba(255,255,255,0.06);
-      /* Body already provides the base dark layer (~78% opaque). The
-         recall pane adds a small extra darkening (~12%) so it reads as
-         a subtly distinct surface from the left meeting list — the
-         "content area" vs the "chrome". Was 0.18 — softened for less
-         harsh contrast between the two panes. */
-      background: rgba(0, 0, 0, 0.12);
+      border-left: 1px solid var(--surface-stroke-subtle);
+      background: var(--bg);
       opacity: 0;
-      transition: opacity 140ms cubic-bezier(0.32, 0.72, 0, 1);
+      transition: opacity 100ms ease-out;
     }
 
     .recall-panel.expanded {
       width: 50%;
       opacity: 1;
-      transition: opacity 220ms cubic-bezier(0.32, 0.72, 0, 1) 120ms;
+      transition: opacity 100ms ease-out 150ms;
     }
 
     .recall-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 14px 16px 14px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-mid);
+      background: var(--bg-elevated);
+      border-top-left-radius: 18px;
+      border-top-right-radius: 18px;
       flex-shrink: 0;
       -webkit-app-region: drag;
-      position: relative;
-      z-index: 2;
-    }
-
-    .recall-header::after {
-      content: '';
-      position: absolute;
-      bottom: -10px;
-      left: 0;
-      right: 0;
-      height: 10px;
-      background: linear-gradient(rgba(0, 0, 0, 0.35), transparent);
-      pointer-events: none;
-      z-index: 1;
     }
 
     .recall-header-info {
@@ -192,39 +317,42 @@
     }
 
     .recall-close {
-      width: 24px;
-      height: 24px;
+      padding: 2px 8px;
       border-radius: 6px;
       border: none;
       background: transparent;
       color: var(--text-tertiary);
+      font-size: 14px;
       cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s ease, color 0.15s ease;
+      line-height: 1;
     }
 
-    .recall-close svg { display: block; }
-    .recall-close:hover { color: var(--text); background: var(--bg-hover); }
+    .recall-close:hover { color: var(--text-secondary); background: var(--bg-hover); }
+    .recall-close:focus-visible {
+      outline: none;
+      color: var(--text-secondary);
+      background: var(--bg-hover);
+    }
+
+    .recall-end-btn {
+      display: none;
+    }
+
+    .recall-end-btn.active {
+      display: inline-flex;
+    }
 
     .recall-terminal {
       flex: 1;
+      min-height: 0;
       overflow: hidden;
-      padding: 20px 8px 8px;
-      background: rgba(14, 15, 17, 0.45);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      margin: 6px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
     }
-
-    /* xterm.js viewport bg must be transparent so the terminal canvas
-       (now using allowTransparency:true + transparent theme bg) shows
-       the recall-terminal's translucent material through. Same for the
-       screen layer. */
-    .recall-terminal .xterm-viewport {
-      background: transparent !important;
-    }
-    .recall-terminal .xterm-screen {
-      background: transparent;
+    .recall-terminal.hidden {
+      display: none;
     }
 
 
@@ -264,14 +392,14 @@
 
     .recall-note-row input:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(99, 145, 179, 0.12);
+      box-shadow: 0 0 0 3px var(--focus-ring-soft);
     }
 
     .recall-note-row input::placeholder { color: var(--text-tertiary); }
 
     /* Loading / error states */
     .recall-status {
-      display: flex;
+      display: none;
       align-items: center;
       justify-content: center;
       flex: 1;
@@ -279,6 +407,12 @@
       gap: 12px;
       color: var(--text-secondary);
       font-size: 13px;
+      padding: 12px 10px;
+      background: var(--bg-elevated);
+    }
+
+    .recall-status.active {
+      display: flex;
     }
 
     .recall-status .processing-spinner {
@@ -291,6 +425,8 @@
       padding: 10px 16px;
       border-top: 1px solid var(--border);
       background: var(--bg-elevated);
+      border-bottom-left-radius: 18px;
+      border-bottom-right-radius: 18px;
       text-align: center;
       font-size: 12px;
       color: var(--text-secondary);
@@ -316,7 +452,7 @@
     }
 
     .lifecycle-badge.prepped {
-      background: rgba(99, 145, 179, 0.12);
+      background: var(--accent-tint);
       color: var(--accent);
     }
 
@@ -326,7 +462,7 @@
     }
 
     .lifecycle-badge.debriefed {
-      background: rgba(70, 192, 114, 0.12);
+      background: var(--green-tint);
       color: var(--green);
     }
 
@@ -356,17 +492,7 @@
       -webkit-app-region: drag;
       position: relative;
       z-index: 10;
-    }
-
-    .header::after {
-      content: '';
-      position: absolute;
-      bottom: -6px;
-      left: 0;
-      right: 0;
-      height: 6px;
-      background: linear-gradient(rgba(28, 28, 30, 0.6), transparent);
-      pointer-events: none;
+      border-bottom: 1px solid var(--border);
     }
 
     .brand {
@@ -376,77 +502,6 @@
       min-width: 0;
     }
 
-    .brand-mark {
-      width: 30px;
-      height: 30px;
-      border-radius: 10px;
-      background:
-        radial-gradient(circle at 28% 25%, rgba(56, 189, 248, 0.55), transparent 45%),
-        radial-gradient(circle at 74% 76%, rgba(251, 191, 36, 0.4), transparent 40%),
-        linear-gradient(155deg, #173b5c 0%, #1d2c4a 100%);
-      box-shadow:
-        inset 0 1px 0 rgba(255,255,255,0.16),
-        0 8px 20px rgba(0,0,0,0.18);
-      position: relative;
-      flex-shrink: 0;
-      animation: brand-breathe 6s ease-in-out infinite;
-    }
-
-    @keyframes brand-breathe {
-      0%, 100% {
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,0.16),
-          0 8px 20px rgba(0,0,0,0.18),
-          0 0 0 0 rgba(56, 189, 248, 0);
-      }
-      50% {
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,0.20),
-          0 8px 22px rgba(0,0,0,0.22),
-          0 0 14px 0 rgba(56, 189, 248, 0.08);
-      }
-    }
-
-    /* Faster, warmer pulse during recording */
-    body.is-recording .brand-mark {
-      animation: brand-pulse-recording 2.4s ease-in-out infinite;
-    }
-
-    @keyframes brand-pulse-recording {
-      0%, 100% {
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,0.16),
-          0 8px 20px rgba(0,0,0,0.18),
-          0 0 0 0 rgba(229, 83, 75, 0);
-      }
-      50% {
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,0.22),
-          0 8px 24px rgba(0,0,0,0.22),
-          0 0 18px 2px rgba(229, 83, 75, 0.18);
-      }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .brand-mark,
-      .first-record-mark { animation: none !important; }
-    }
-
-    .brand-mark::before,
-    .brand-mark::after {
-      content: "";
-      position: absolute;
-      top: 7px;
-      width: 7px;
-      height: 16px;
-      border-radius: 3px;
-      background: rgba(248, 250, 252, 0.92);
-      box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
-    }
-
-    .brand-mark::before { left: 7px; }
-    .brand-mark::after { right: 7px; }
-
     .brand-copy {
       min-width: 0;
     }
@@ -454,7 +509,7 @@
     .brand-label {
       font-size: 18px;
       font-family: var(--font-display);
-      font-weight: 700;
+      font-weight: 400;
       letter-spacing: -0.3px;
       color: var(--text);
       line-height: 1;
@@ -477,7 +532,7 @@
       gap: 4px;
       padding: 3px 8px;
       border-radius: 999px;
-      background: rgba(212, 160, 60, 0.08);
+      background: var(--orange-tint-soft);
       color: var(--orange);
       font-size: 10px;
       font-weight: 600;
@@ -492,7 +547,7 @@
     }
 
     .header-chip.dictation-shortcut {
-      background: rgba(99, 145, 179, 0.10);
+      background: var(--accent-soft);
       color: var(--accent);
     }
 
@@ -516,7 +571,7 @@
       height: auto;
       border-radius: 12px;
       opacity: 1;
-      background: rgba(229, 83, 75, 0.12);
+      background: var(--red-tint);
       color: var(--red);
       font-weight: 600;
       letter-spacing: 0.3px;
@@ -529,8 +584,8 @@
       height: auto;
       border-radius: 12px;
       opacity: 1;
-      background: rgba(99, 145, 179, 0.12);
-      color: var(--accent);
+      background: var(--green-tint);
+      color: var(--green);
     }
 
     .status-pill.live {
@@ -540,7 +595,7 @@
       height: auto;
       border-radius: 12px;
       opacity: 1;
-      background: rgba(52, 199, 89, 0.15);
+      background: var(--green-tint);
       color: var(--live);
     }
 
@@ -548,8 +603,8 @@
     .live-bar {
       display: none;
       padding: 12px 16px;
-      background: rgba(52, 199, 89, 0.10);
-      border-bottom: 1px solid rgba(52, 199, 89, 0.18);
+      background: var(--green-tint-soft);
+      border-bottom: 1px solid var(--green-border);
     }
     .live-bar.active { display: block; }
     @media (prefers-reduced-motion: reduce) {
@@ -580,8 +635,8 @@
       /* Rounded square shape distinguishes from recording's circle for colorblind users */
     }
     @keyframes live-pulse {
-      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.4); }
-      50% { opacity: 0.7; box-shadow: 0 0 6px 2px rgba(52, 199, 89, 0.3); }
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--green-glow); }
+      50% { opacity: 0.7; box-shadow: 0 0 6px 2px var(--green-ring); }
     }
     .live-time {
       font-size: 20px;
@@ -599,7 +654,7 @@
     .live-level {
       height: 3px;
       margin: 6px 0 8px;
-      background: rgba(255,255,255,0.06);
+      background: var(--neutral-tint);
       border-radius: 2px;
       overflow: hidden;
     }
@@ -620,34 +675,26 @@
     /* ── Recording bar ── */
     .recording-bar {
       display: none;
-      opacity: 0;
-      transform: translateY(-6px);
       padding: 16px;
-      background: rgba(229, 83, 75, 0.10);
-      border-bottom: 1px solid rgba(229, 83, 75, 0.16);
-      box-shadow: inset 0 0 28px rgba(229, 83, 75, 0.06);
-      transition: opacity 280ms cubic-bezier(0.32, 0.72, 0, 1),
-                  transform 280ms cubic-bezier(0.32, 0.72, 0, 1),
-                  display 280ms allow-discrete;
+      background: var(--red-tint-soft);
+      border-bottom: 1px solid var(--red-border);
+      animation: recording-breathe 3s ease-in-out infinite;
+      box-shadow: inset 0 0 24px var(--red-glow-soft);
     }
 
     .recording-bar.active {
       display: block;
-      opacity: 1;
-      transform: translateY(0);
-      animation: recording-breathe 3s ease-in-out infinite;
+      animation: recording-enter 0.3s ease-out, recording-breathe 3s ease-in-out 0.3s infinite;
     }
 
-    @starting-style {
-      .recording-bar.active {
-        opacity: 0;
-        transform: translateY(-6px);
-      }
+    @keyframes recording-enter {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     @keyframes recording-breathe {
-      0%, 100% { background: rgba(229, 83, 75, 0.10); }
-      50% { background: rgba(229, 83, 75, 0.15); }
+      0%, 100% { background: var(--red-tint-soft); }
+      50% { background: var(--red-tint); }
     }
 
     .recording-bar .top-row {
@@ -661,10 +708,10 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--red);
-      letter-spacing: 0.8px;
+      letter-spacing: 0.3px;
       text-transform: uppercase;
     }
 
@@ -708,9 +755,9 @@
       width: 2px;
       border-radius: 999px;
       background: var(--red);
-      opacity: 0.6;
+      opacity: 0.72;
       min-height: 2px;
-      transition: height 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: height 0.1s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
     }
 
     .recording-actions {
@@ -732,36 +779,19 @@
     /* ── Processing bar ── */
     .processing-bar {
       display: none;
-      opacity: 0;
-      transform: translateY(-6px);
-      padding: 14px 16px;
-      background: rgba(99, 145, 179, 0.10);
-      border-bottom: 1px solid rgba(99, 145, 179, 0.16);
-      transition: opacity 240ms cubic-bezier(0.32, 0.72, 0, 1) 80ms,
-                  transform 240ms cubic-bezier(0.32, 0.72, 0, 1) 80ms,
-                  display 240ms allow-discrete 80ms;
-    }
-
-    /* When exactly one job is processing, the per-job card already
-       shows title/stage/elapsed — hide the redundant top summary row. */
-    .processing-bar.single-job .processing-row {
-      display: none;
-    }
-    .processing-bar.single-job .processing-jobs {
-      margin-top: 0;
+      padding: 16px;
+      background: var(--green-tint-soft);
+      border-bottom: 1px solid var(--green-border-soft);
     }
 
     .processing-bar.active {
       display: block;
-      opacity: 1;
-      transform: translateY(0);
+      animation: processing-enter 0.3s ease-out;
     }
 
-    @starting-style {
-      .processing-bar.active {
-        opacity: 0;
-        transform: translateY(-6px);
-      }
+    @keyframes processing-enter {
+      from { opacity: 0; }
+      to { opacity: 1; }
     }
 
     .processing-row {
@@ -773,7 +803,7 @@
     .processing-spinner {
       width: 16px;
       height: 16px;
-      border: 2px solid rgba(99, 145, 179, 0.15);
+      border: 2px solid var(--green-border);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: processing-spin 0.9s linear infinite;
@@ -791,7 +821,7 @@
 
     .processing-summary {
       font-size: 11px;
-      color: var(--text-tertiary, #888);
+      color: var(--text-tertiary);
       margin-top: 6px;
     }
 
@@ -805,7 +835,7 @@
       border-radius: var(--radius);
       padding: 10px 12px;
       background: var(--bg-elevated);
-      border: 1px solid rgba(99, 145, 179, 0.08);
+      border: 1px solid var(--green-border-soft);
     }
 
     .processing-job-top {
@@ -841,7 +871,7 @@
 
     .processing-job-meta {
       font-size: 11px;
-      color: var(--text-tertiary, #888);
+      color: var(--text-tertiary);
       margin-top: 4px;
       font-variant-numeric: tabular-nums;
     }
@@ -855,7 +885,7 @@
 
     .processing-title {
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 400;
       color: var(--accent);
       font-family: var(--font-display);
     }
@@ -867,7 +897,7 @@
     }
     .processing-elapsed {
       font-size: 11px;
-      color: var(--text-tertiary, #888);
+      color: var(--text-tertiary);
       margin-top: 1px;
       font-variant-numeric: tabular-nums;
     }
@@ -875,92 +905,81 @@
     /* ── Output notice ── */
     .output-notice {
       display: none;
-      opacity: 0;
-      transform: translateY(-6px);
-      padding: 10px 14px;
-      background: rgba(70, 192, 114, 0.10);
-      border-bottom: 1px solid rgba(70, 192, 114, 0.16);
-      transition: opacity 320ms cubic-bezier(0.32, 0.72, 0, 1) 120ms,
-                  transform 320ms cubic-bezier(0.32, 0.72, 0, 1) 120ms,
-                  display 320ms allow-discrete 120ms;
+      padding: 16px;
+      background: var(--green-tint-soft);
+      border-bottom: 1px solid var(--green-border);
     }
 
     .output-notice.active {
       display: block;
-      opacity: 1;
-      transform: translateY(0);
+      animation: notice-enter 0.3s ease-out;
     }
 
-    @starting-style {
-      .output-notice.active {
-        opacity: 0;
-        transform: translateY(-6px);
-      }
+    @keyframes notice-enter {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     .output-notice.capture {
-      background: rgba(212, 160, 60, 0.08);
-      border-bottom-color: rgba(212, 160, 60, 0.16);
+      background: var(--orange-tint-soft);
+      border-bottom-color: var(--orange-border);
     }
 
     .output-notice-row {
       display: flex;
-      align-items: center;
-      gap: 10px;
+      align-items: flex-start;
+      gap: 12px;
     }
 
     .output-notice-icon {
-      width: 22px;
-      height: 22px;
+      width: 28px;
+      height: 28px;
       border-radius: 999px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 12px;
+      font-size: 14px;
       flex-shrink: 0;
-      background: rgba(70, 192, 114, 0.16);
+      background: var(--green-tint);
       color: var(--green);
     }
 
     .output-notice.capture .output-notice-icon {
-      background: rgba(212, 160, 60, 0.16);
+      background: var(--orange-tint);
       color: var(--orange);
     }
 
     .output-notice-copy {
       min-width: 0;
       flex: 1;
-      display: flex;
-      flex-direction: column;
     }
 
     .output-notice-title {
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 600;
       color: var(--text);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
 
     .output-notice-detail {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--text-secondary);
-      margin-top: 1px;
-      line-height: 1.35;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      margin-top: 3px;
+      line-height: 1.45;
     }
 
     .output-notice-path {
-      display: none;
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin-top: 6px;
+      font-family: var(--font-mono);
+      word-break: break-all;
     }
 
     .output-notice-actions {
       display: flex;
-      gap: 6px;
-      flex-shrink: 0;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
     }
 
     /* ── Quick note inline ── */
@@ -992,79 +1011,49 @@
 
     .quick-note-row input:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(99, 145, 179, 0.12);
+      box-shadow: 0 0 0 3px var(--focus-ring-soft);
     }
 
     .quick-note-row input::placeholder { color: var(--text-tertiary); }
 
     /* ── Search ── */
     .search-wrap {
-      padding: 10px 16px 12px;
+      padding: 0 16px 12px;
     }
 
     .search-box {
       width: 100%;
       padding: 9px 12px 9px 34px;
-      border: 1px solid rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
       border-radius: var(--radius-lg);
-      background: rgba(255,255,255,0.03);
+      background: var(--surface-fill);
       color: var(--text);
       font-family: inherit;
       font-size: 13px;
       outline: none;
       -webkit-user-select: text;
       user-select: text;
-      transition: border-color 200ms cubic-bezier(0.32, 0.72, 0, 1),
-                  box-shadow 200ms cubic-bezier(0.32, 0.72, 0, 1),
-                  background 200ms cubic-bezier(0.32, 0.72, 0, 1);
     }
 
     .search-box:focus {
-      border-color: rgba(99, 145, 179, 0.5);
-      box-shadow: 0 0 0 4px rgba(99, 145, 179, 0.10);
-      background: rgba(255,255,255,0.05);
+      border-color: var(--accent-border-strong);
+      box-shadow: 0 0 0 3px var(--focus-ring-subtle);
+      background: var(--surface-fill-hover);
     }
 
     .search-box::placeholder { color: var(--text-tertiary); }
-
-    .search-kbd {
-      position: absolute;
-      right: 28px;
-      top: 50%;
-      transform: translateY(calc(-50% - 1px));
-      display: inline-flex;
-      align-items: center;
-      gap: 2px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: var(--text-tertiary);
-      font-size: 10px;
-      font-weight: 500;
-      letter-spacing: 0.2px;
-      pointer-events: none;
-      transition: opacity 200ms ease;
-    }
-
-    .search-box:focus ~ .search-kbd,
-    .search-box:not(:placeholder-shown) ~ .search-kbd {
-      opacity: 0;
-    }
 
     .search-icon {
       position: relative;
     }
 
     .search-icon::before {
-      content: "";
+      content: "⌕";
       position: absolute;
       left: 28px;
-      top: 50%;
-      width: 14px;
-      height: 14px;
-      transform: translateY(calc(-50% - 1px));
-      background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="%237b7b80" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="5"/><path d="m14 14-3.05-3.05"/></svg>') center/contain no-repeat;
+      top: 9px;
+      font-size: 16px;
+      color: var(--text-tertiary);
       pointer-events: none;
       z-index: 1;
     }
@@ -1081,44 +1070,26 @@
     .meetings-scroll::-webkit-scrollbar { width: 5px; }
     .meetings-scroll::-webkit-scrollbar-track { background: transparent; }
     .meetings-scroll::-webkit-scrollbar-thumb {
-      background: rgba(255,255,255,0.08);
+      background: var(--surface-fill-strong);
       border-radius: 999px;
     }
     .meetings-scroll::-webkit-scrollbar-thumb:hover {
-      background: rgba(255,255,255,0.14);
+      background: var(--surface-fill-stronger);
     }
 
     .date-group {
       font-size: 10px;
-      font-family: inherit;
-      font-weight: 600;
+      font-family: var(--font-mono);
+      font-weight: 500;
       text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: var(--orange);
-      padding: 22px 16px 8px 28px;
+      letter-spacing: 0.42px;
+      color: var(--text-tertiary);
+      padding: 24px 4px 8px;
+      border-bottom: 1px solid var(--border);
       margin-bottom: 2px;
-      position: relative;
     }
 
-    .date-group::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 28px;
-      right: 16px;
-      height: 1px;
-      background: linear-gradient(to right,
-        rgba(255, 255, 255, 0.06),
-        rgba(255, 255, 255, 0.02) 60%,
-        transparent);
-    }
-
-    .date-group:first-child {
-      padding-top: 4px;
-    }
-    .date-group:first-child::before {
-      display: none;
-    }
+    .date-group:first-child { padding-top: 4px; }
 
     /* ── Staggered entrance ── */
     @keyframes list-enter {
@@ -1156,27 +1127,9 @@
 
     .meeting-item:hover {
       background: var(--bg-hover);
-      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+      box-shadow: 0 1px 4px var(--shadow-soft);
     }
-    .meeting-item::after {
-      content: '';
-      position: absolute;
-      left: 18px;
-      top: 50%;
-      transform: translateY(-50%) scaleY(0);
-      width: 2px;
-      height: 24px;
-      border-radius: 2px;
-      background: var(--accent);
-      opacity: 0;
-      transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1),
-                  opacity 220ms ease;
-    }
-    .meeting-item:hover::after {
-      transform: translateY(-50%) scaleY(1);
-      opacity: 0.7;
-    }
-    .meeting-item:active { background: rgba(255,255,255,0.08); box-shadow: none; }
+    .meeting-item:active { background: var(--surface-fill-strong); box-shadow: none; }
 
     .meeting-info { flex: 1; min-width: 0; }
 
@@ -1191,11 +1144,10 @@
 
     .meeting-meta {
       font-size: 11px;
-      font-family: inherit;
+      font-family: var(--font-mono);
       color: var(--text-tertiary);
       margin-top: 3px;
-      font-variant-numeric: tabular-nums;
-      font-feature-settings: "tnum" 1, "ss01" 1;
+      letter-spacing: 0.2px;
     }
 
     .meeting-snippet {
@@ -1221,35 +1173,35 @@
       font-size: 0;
       overflow: hidden;
       margin: 0;
-      background: rgba(255,255,255,0.25);
+      background: var(--surface-fill-strongest);
       transition: background 0.15s ease;
     }
 
     .meeting-item:hover .meeting-badge {
-      background: rgba(255,255,255,0.35);
+      background: var(--surface-fill-strongest-hover);
     }
 
     .meeting-badge.memo {
-      background: rgba(155, 133, 196, 0.7);
+      background: var(--purple-solid-soft);
     }
 
     .meeting-item:hover .meeting-badge.memo {
-      background: rgba(155, 133, 196, 0.85);
+      background: var(--purple-solid-strong);
     }
 
     .meeting-badge.dictation {
-      background: rgba(99, 145, 179, 0.7);
+      background: var(--green-solid-soft);
     }
 
     .meeting-item:hover .meeting-badge.dictation {
-      background: rgba(99, 145, 179, 0.85);
+      background: var(--green-solid-strong);
     }
 
     /* ── Meeting detail view ── */
     .detail-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(10, 10, 12, 0.68);
+      background: var(--overlay-scrim);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
       display: none;
@@ -1264,17 +1216,14 @@
     .detail-card {
       width: min(760px, 100%);
       max-height: calc(100vh - 40px);
-      background: rgba(28, 28, 30, 0.92);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--bg);
+      border: 1px solid var(--border);
       border-radius: 18px;
+      position: relative;
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 32px 80px rgba(0, 0, 0, 0.5),
-                  0 0 0 1px rgba(255, 255, 255, 0.02),
-                  inset 0 1px 0 rgba(255, 255, 255, 0.04);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
+      box-shadow: 0 24px 60px var(--shadow-strong);
     }
 
     .detail-header {
@@ -1301,6 +1250,7 @@
       border: none;
       background: transparent;
       color: var(--text-tertiary);
+      font-size: 16px;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -1309,13 +1259,18 @@
       -webkit-app-region: no-drag;
       z-index: 1;
     }
-    .detail-close-x svg { display: block; }
-    .detail-close-x:hover { background: var(--bg-hover); color: var(--text); }
+    .detail-close-x:hover { background: var(--bg-hover); color: var(--text-secondary); }
+    .detail-close-x:focus-visible {
+      outline: none;
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+      box-shadow: 0 0 0 2px var(--focus-ring);
+    }
 
     .detail-title {
       font-size: 18px;
       font-family: var(--font-display);
-      font-weight: 700;
+      font-weight: 400;
       letter-spacing: -0.2px;
       color: var(--text);
       margin-bottom: 6px;
@@ -1327,20 +1282,16 @@
     .detail-meta {
       display: flex;
       flex-wrap: wrap;
-      align-items: center;
-      gap: 6px;
-      font-size: 11px;
-      color: var(--text-tertiary);
-      font-variant-numeric: tabular-nums;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
     }
 
     .detail-meta-chip {
-      padding: 2px 8px;
+      padding: 3px 8px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      background: var(--bg-elevated);
       color: var(--text-secondary);
-      font-weight: 500;
     }
 
     .detail-actions {
@@ -1359,8 +1310,8 @@
       margin-top: 20px;
       padding: 14px 16px;
       border-radius: 12px;
-      background: rgba(99, 145, 179, 0.06);
-      border: 1px solid rgba(99, 145, 179, 0.15);
+      background: var(--green-tint-soft);
+      border: 1px solid var(--green-border);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -1396,7 +1347,7 @@
       transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
     }
     .meeting-item:hover .meeting-chat-btn { opacity: 1; }
-    .meeting-chat-btn:hover { background: rgba(99, 145, 179, 0.15); color: var(--accent); }
+    .meeting-chat-btn:hover { background: var(--accent-tint); color: var(--accent); }
 
     .detail-context {
       margin-top: 16px;
@@ -1478,7 +1429,7 @@
     }
 
     .speaker-name {
-      color: var(--text);
+      color: var(--text-primary);
       font-weight: 500;
     }
 
@@ -1492,39 +1443,36 @@
     }
 
     .speaker-badge.high {
-      background: rgba(52, 199, 89, 0.15);
+      background: var(--green-tint);
       color: var(--live);
     }
 
     .speaker-badge.medium {
-      background: rgba(212, 160, 60, 0.15);
+      background: var(--orange-tint);
       color: var(--orange);
     }
 
     .speaker-badge.low {
-      background: rgba(142, 142, 147, 0.15);
+      background: var(--muted-badge);
       color: var(--text-tertiary);
     }
 
     .speaker-confirm-btn {
-      font-size: 10px;
-      font-weight: 600;
-      padding: 3px 10px;
-      border-radius: 6px;
-      border: 1px solid rgba(99, 145, 179, 0.25);
-      background: rgba(99, 145, 179, 0.08);
-      color: var(--accent);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-secondary);
       cursor: pointer;
-      transition: background 180ms cubic-bezier(0.32, 0.72, 0, 1),
-                  border-color 180ms cubic-bezier(0.32, 0.72, 0, 1),
-                  transform 120ms cubic-bezier(0.32, 0.72, 0, 1);
+      transition: all 0.15s;
     }
 
     .speaker-confirm-btn:hover {
-      background: rgba(99, 145, 179, 0.16);
-      border-color: rgba(99, 145, 179, 0.4);
+      background: var(--accent);
+      color: var(--bg);
+      border-color: var(--accent);
     }
-    .speaker-confirm-btn:active { transform: scale(0.96); }
 
     .speaker-confirm-btn[disabled] {
       opacity: 0.65;
@@ -1533,31 +1481,31 @@
     }
 
     .detail-feedback {
-      margin: 0 24px 16px;
+      margin: 0 20px 14px;
       padding: 10px 12px;
       border-radius: 10px;
       font-size: 13px;
       font-weight: 500;
-      border: 1px solid rgba(255,255,255,0.06);
-      background: rgba(255,255,255,0.04);
-      color: var(--text);
+      border: 1px solid var(--border);
+      background: var(--surface-fill);
+      color: var(--text-secondary);
     }
 
     .detail-feedback.success {
-      border-color: rgba(70, 192, 114, 0.28);
-      background: rgba(70, 192, 114, 0.12);
-      color: #8fe0ab;
+      border-color: var(--green-border);
+      background: var(--green-tint-soft);
+      color: var(--green);
     }
 
     .detail-feedback.error {
-      border-color: rgba(229, 83, 75, 0.28);
-      background: rgba(229, 83, 75, 0.12);
-      color: #ff9d97;
+      border-color: var(--red-border-strong);
+      background: var(--red-tint-soft);
+      color: var(--red);
     }
 
     .detail-section {
       padding-top: 18px;
-      border-top: 1px solid rgba(255, 255, 255, 0.04);
+      border-top: 1px solid var(--surface-stroke-subtle);
       margin-top: 18px;
     }
 
@@ -1569,11 +1517,12 @@
 
     .detail-section-title {
       font-size: 10px;
+      font-family: var(--font-mono);
       font-weight: 600;
-      letter-spacing: 0.8px;
+      letter-spacing: 0.4px;
       text-transform: uppercase;
-      color: var(--text-tertiary);
-      margin-bottom: 12px;
+      color: var(--accent);
+      margin-bottom: 10px;
     }
 
     .detail-section-body {
@@ -1585,7 +1534,7 @@
     }
 
     mark {
-      background: rgba(212, 160, 60, 0.35);
+      background: var(--orange-border);
       color: var(--text);
       padding: 0 2px;
       border-radius: 3px;
@@ -1606,179 +1555,14 @@
       color: var(--text-tertiary);
     }
 
-    .empty-state .icon { font-size: 40px; margin-bottom: 12px; opacity: 0.35; filter: grayscale(0.3); }
-    .empty-state .title { font-size: 15px; font-family: var(--font-display); font-weight: 600; color: var(--text-secondary); }
-    .empty-state .sub { font-size: 12px; margin-top: 6px; line-height: 1.5; }
-
-    /* First-record card — shown when model is installed but no recordings.
-       Quiet, single CTA, no multi-step flow. Vanishes the moment the user
-       records anything. */
-    .empty-state.first-record {
-      padding: 64px 24px 32px;
-    }
-
-    .first-record-card {
-      max-width: 360px;
-      margin: 0 auto;
-      text-align: center;
-      animation: first-record-enter 480ms cubic-bezier(0.32, 0.72, 0, 1);
-    }
-
-    @keyframes first-record-enter {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .first-record-mark {
-      width: 48px;
-      height: 48px;
-      margin: 0 auto 18px;
-      border-radius: 14px;
-      background:
-        radial-gradient(circle at 28% 25%, rgba(56, 189, 248, 0.55), transparent 45%),
-        radial-gradient(circle at 74% 76%, rgba(251, 191, 36, 0.4), transparent 40%),
-        linear-gradient(155deg, #173b5c 0%, #1d2c4a 100%);
-      box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.16),
-        0 12px 32px rgba(0, 0, 0, 0.22);
-      position: relative;
-      animation: brand-breathe 5s ease-in-out infinite;
-    }
-
-    .first-record-mark::before,
-    .first-record-mark::after {
-      content: "";
-      position: absolute;
-      top: 11px;
-      width: 11px;
-      height: 26px;
-      border-radius: 4px;
-      background: rgba(248, 250, 252, 0.92);
-      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
-    }
-    .first-record-mark::before { left: 11px; }
-    .first-record-mark::after { right: 11px; }
-
-    .first-record-title {
-      font-size: 20px;
-      font-family: var(--font-display);
-      font-weight: 700;
-      letter-spacing: -0.3px;
-      color: var(--text);
-      margin-bottom: 10px;
-    }
-
-    .first-record-sub {
-      font-size: 13px;
-      color: var(--text-secondary);
-      line-height: 1.55;
-      margin-bottom: 22px;
-    }
-
-    .first-record-sub kbd {
-      display: inline-block;
-      padding: 1px 6px;
-      margin: 0 1px;
-      border-radius: 4px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: var(--text);
-      font-family: inherit;
-      font-size: 11px;
-      font-weight: 500;
-      vertical-align: 1px;
-    }
-
-    .first-record-tips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      justify-content: center;
-    }
-
-    .first-record-tip {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 5px 9px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.025);
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      color: var(--text-tertiary);
-      font-size: 11px;
-      font-weight: 500;
-    }
-
-    .first-record-tip kbd {
-      display: inline-block;
-      padding: 1px 5px;
-      border-radius: 3px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: var(--text-secondary);
-      font-family: inherit;
-      font-size: 10px;
-      font-weight: 600;
-    }
-
-    /* ── List skeleton (initial load) ── */
-    .list-skeleton {
-      padding: 22px 16px 8px 28px;
-      display: flex;
-      flex-direction: column;
-      gap: 22px;
-    }
-
-    .skeleton-section {
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
-    }
-
-    .skeleton-label {
-      width: 56px;
-      height: 9px;
-      border-radius: 3px;
-      background: linear-gradient(90deg,
-        rgba(212, 160, 60, 0.10) 0%,
-        rgba(212, 160, 60, 0.20) 50%,
-        rgba(212, 160, 60, 0.10) 100%);
-      background-size: 200% 100%;
-      animation: shimmer 1.6s ease-in-out infinite;
-    }
-
-    .skeleton-row {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .skeleton-bar {
-      height: 10px;
-      border-radius: 4px;
-      background: linear-gradient(90deg,
-        rgba(255, 255, 255, 0.04) 0%,
-        rgba(255, 255, 255, 0.10) 50%,
-        rgba(255, 255, 255, 0.04) 100%);
-      background-size: 200% 100%;
-      animation: shimmer 1.6s ease-in-out infinite;
-    }
-
-    .skeleton-bar.title { width: 78%; height: 12px; }
-    .skeleton-bar.title.short { width: 54%; }
-    .skeleton-bar.title.medium { width: 66%; }
-    .skeleton-bar.meta { width: 42px; height: 8px; }
-
-    @keyframes shimmer {
-      0% { background-position: 200% 0; }
-      100% { background-position: -200% 0; }
-    }
+    .empty-state .title { font-size: 20px; font-family: var(--font-display); font-weight: 400; color: var(--text); margin-bottom: 6px; }
+    .empty-state .sub { font-size: 12px; margin-top: 6px; line-height: 1.5; color: var(--text-secondary); }
 
     /* ── About view ── */
     .about-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(8, 10, 16, 0.66);
+      background: var(--modal-scrim);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       display: none;
@@ -1794,10 +1578,10 @@
       width: min(520px, 100%);
       max-height: calc(100vh - 40px);
       overflow-y: auto;
-      background: linear-gradient(180deg, rgba(22, 32, 50, 0.96), rgba(16, 24, 38, 0.96));
-      border: 1px solid rgba(255,255,255,0.08);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-mid);
       border-radius: 20px;
-      box-shadow: 0 24px 60px rgba(0,0,0,0.42);
+      box-shadow: 0 24px 60px var(--shadow-stronger);
       padding: 22px 22px 20px;
       color: var(--text);
     }
@@ -1820,6 +1604,7 @@
     .about-copy h2 {
       font-size: 24px;
       font-family: var(--font-display);
+      font-weight: 400;
       line-height: 1;
       letter-spacing: -0.4px;
       margin-bottom: 6px;
@@ -1841,8 +1626,8 @@
     .about-item {
       padding: 12px 12px 11px;
       border-radius: 14px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.06);
+      background: var(--surface-fill);
+      border: 1px solid var(--border);
     }
 
     .about-item-title {
@@ -1862,7 +1647,7 @@
 
     .about-footer {
       padding-top: 14px;
-      border-top: 1px solid rgba(255,255,255,0.06);
+      border-top: 1px solid var(--border);
       font-size: 12px;
       color: var(--text-tertiary);
       line-height: 1.45;
@@ -1875,7 +1660,7 @@
       gap: 12px;
       margin-top: 14px;
       padding-top: 14px;
-      border-top: 1px solid rgba(255,255,255,0.06);
+      border-top: 1px solid var(--border);
     }
 
     .about-controls-copy {
@@ -1885,7 +1670,7 @@
     }
 
     .about-controls .toggle-btn {
-      width: auto !important;
+      width: auto;
       min-width: 56px;
       max-width: 72px;
       flex-shrink: 0;
@@ -1915,41 +1700,6 @@
       flex: 1;
     }
 
-    /* Shared select/input control inside settings sections.
-       Replaces the inline-style soup that was repeated ~10 times. */
-    .settings-input {
-      margin-top: 6px;
-      width: 100%;
-      padding: 6px 8px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.10);
-      color: var(--text);
-      font-size: 13px;
-      font-family: inherit;
-      box-sizing: border-box;
-      outline: none;
-      transition: border-color var(--duration-base) var(--ease-out-quart),
-                  background var(--duration-base) var(--ease-out-quart);
-    }
-    .settings-input:focus {
-      border-color: rgba(99, 145, 179, 0.45);
-      background: rgba(255, 255, 255, 0.08);
-    }
-
-    /* Shared section wrapper inside Settings panel. */
-    .settings-section {
-      margin-bottom: 16px;
-    }
-
-    /* Shared inline row for shortcut recorder + caps lock link. */
-    .settings-shortcut-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 6px;
-    }
-
     .about-controls-meta {
       margin-top: 8px;
       font-size: 11px;
@@ -1965,7 +1715,7 @@
     .readiness-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(8, 10, 16, 0.66);
+      background: var(--modal-scrim);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       display: none;
@@ -1986,7 +1736,7 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+      box-shadow: 0 24px 60px var(--shadow-strong);
     }
 
     .readiness-header {
@@ -2001,7 +1751,7 @@
     .readiness-title {
       font-size: 18px;
       font-family: var(--font-display);
-      font-weight: 700;
+      font-weight: 400;
       letter-spacing: -0.2px;
       color: var(--text);
       margin-bottom: 6px;
@@ -2058,22 +1808,22 @@
       letter-spacing: 0.4px;
       text-transform: uppercase;
       flex-shrink: 0;
-      background: rgba(255,255,255,0.08);
+      background: var(--surface-fill-strong);
       color: var(--text-secondary);
     }
 
     .readiness-state.ready {
-      background: rgba(70, 192, 114, 0.12);
+      background: var(--green-tint);
       color: var(--green);
     }
 
     .readiness-state.attention {
-      background: rgba(212, 160, 60, 0.12);
+      background: var(--orange-tint);
       color: var(--orange);
     }
 
     .readiness-state.unsupported {
-      background: rgba(255,255,255,0.06);
+      background: var(--neutral-tint);
       color: var(--text-secondary);
     }
 
@@ -2088,7 +1838,7 @@
     .recovery-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(8, 10, 16, 0.66);
+      background: var(--modal-scrim);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       display: none;
@@ -2109,7 +1859,7 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+      box-shadow: 0 24px 60px var(--shadow-strong);
     }
 
     .recovery-header {
@@ -2124,7 +1874,7 @@
     .recovery-title {
       font-size: 18px;
       font-family: var(--font-display);
-      font-weight: 700;
+      font-weight: 400;
       letter-spacing: -0.2px;
       color: var(--text);
       margin-bottom: 6px;
@@ -2177,7 +1927,7 @@
     .recovery-kind {
       padding: 3px 8px;
       border-radius: 999px;
-      background: rgba(212, 160, 60, 0.12);
+      background: var(--orange-tint);
       color: var(--orange);
       font-size: 10px;
       font-weight: 700;
@@ -2210,57 +1960,78 @@
     /* ── Footer ── */
     .footer {
       padding: 8px 12px 12px;
-      border-top: none;
+      border-top: 1px solid var(--border);
       position: relative;
     }
 
-    .footer::before {
-      content: '';
-      position: absolute;
-      top: -8px;
-      left: 0;
-      right: 0;
-      height: 8px;
-      background: linear-gradient(transparent, rgba(28, 28, 30, 0.8));
-      pointer-events: none;
-    }
-
     .footer-actions {
-      display: flex;
-      align-items: stretch;
-      gap: 5px;
+      display: grid;
+      gap: 8px;
       background: var(--bg-elevated);
-      border: 1px solid rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
       border-radius: 14px;
       padding: 6px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.02);
+      box-shadow: 0 2px 12px var(--shadow-soft), 0 0 0 1px var(--surface-fill);
     }
 
-    .footer-record-group {
-      display: flex;
-      align-items: center;
+    .footer-action-primary {
+      display: grid;
+      grid-template-columns: 1fr;
+    }
+
+    .footer-action-primary,
+    .footer-device-picker {
+      display: grid;
       gap: 4px;
-      flex: 1 1 auto;
-      min-width: 0;
     }
 
-    .footer-record-group .btn-primary {
-      flex: 0 0 auto;
+    .footer-action-primary .btn-primary {
+      min-height: 42px;
+      font-size: 14px;
+      font-weight: 600;
     }
 
-    .footer-record-group .device-picker {
-      flex: 1 1 90px;
-      min-width: 70px;
-    }
-
-    .footer-actions > .btn {
-      flex: 0 0 auto;
+    .footer-action-secondary {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 4px;
     }
 
     .footer-actions .btn {
+      width: 100%;
       border-radius: var(--radius);
       font-size: 12px;
       white-space: nowrap;
+    }
+
+    .footer-device-picker {
+      gap: 5px;
+    }
+
+    .footer-device-label {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.32px;
+      color: var(--text-tertiary);
+    }
+
+    .footer-device-picker .device-picker {
+      max-width: 100%;
+    }
+
+    @media (min-width: 540px) {
+      .footer-actions {
+        grid-template-columns: 1fr;
+      }
+
+      .footer-action-primary {
+        grid-template-columns: 1fr;
+      }
+
+      .footer-action-secondary {
+        grid-template-columns: 1fr 1fr 1fr;
+      }
     }
 
     /* ── Buttons ── */
@@ -2272,56 +2043,54 @@
       font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: background 180ms cubic-bezier(0.32, 0.72, 0, 1),
-                  box-shadow 180ms cubic-bezier(0.32, 0.72, 0, 1),
-                  transform 120ms cubic-bezier(0.32, 0.72, 0, 1),
-                  color 180ms ease;
+      transition:
+        color 0.18s ease,
+        background-color 0.18s ease,
+        border-color 0.18s ease,
+        box-shadow 0.18s ease,
+        transform 0.15s ease;
       -webkit-app-region: no-drag;
     }
 
+    .btn:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px var(--focus-ring);
+    }
+
     .btn-primary {
-      background: linear-gradient(135deg, var(--accent) 0%, #4d7a99 100%);
-      color: #fff;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.22),
-                  0 0 12px rgba(99, 145, 179, 0.18),
-                  inset 0 1px 0 rgba(255, 255, 255, 0.18);
+      background: var(--accent);
+      color: var(--bg);
+      box-shadow: inset 0 -1px 0 var(--border);
+    }
+
+    .footer-actions .btn-primary {
+      width: 100%;
     }
 
     .btn-primary:hover {
-      background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent) 100%);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.28),
-                  0 0 22px rgba(99, 145, 179, 0.28),
-                  inset 0 1px 0 rgba(255, 255, 255, 0.22);
+      background: var(--accent-hover);
+      box-shadow: inset 0 -1px 0 var(--border);
     }
-    .btn-primary:active {
-      transform: scale(0.97);
-      box-shadow: 0 0 8px rgba(99, 145, 179, 0.12),
-                  inset 0 1px 0 rgba(255, 255, 255, 0.12);
-    }
+    .btn-primary:active { transform: scale(0.98); }
 
     .btn-danger {
-      background: rgba(229, 83, 75, 0.12);
+      background: var(--red-tint);
       color: var(--red);
-      border: 1px solid rgba(229, 83, 75, 0.3);
+      border: 1px solid var(--red-border-strong);
       box-shadow: none;
       font-weight: 600;
     }
 
-    .btn-danger:hover { background: rgba(229, 83, 75, 0.2); border-color: rgba(229, 83, 75, 0.5); }
-    .btn-danger:active { transform: scale(0.98); background: rgba(229, 83, 75, 0.25); }
+    .btn-danger:hover { background: var(--red-tint-strong); border-color: var(--red-border-stronger); }
+    .btn-danger:active { transform: scale(0.98); background: var(--red-tint-stronger); }
 
     .btn-secondary {
-      background: rgba(255,255,255,0.05);
+      background: var(--surface-fill-hover);
       color: var(--text-secondary);
-      border: 1px solid rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
     }
 
-    .btn-secondary:hover {
-      background: rgba(255,255,255,0.09);
-      color: var(--text);
-      border-color: rgba(255,255,255,0.10);
-    }
-    .btn-secondary:active { transform: scale(0.97); background: rgba(255,255,255,0.12); }
+    .btn-secondary:hover { background: var(--surface-fill-strong); color: var(--text); }
 
     .btn-sm { padding: 5px 12px; font-size: 12px; }
 
@@ -2330,53 +2099,53 @@
       color: var(--text-secondary);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 5px 7px;
+      padding: 6px 8px;
       font-size: 11px;
       font-family: inherit;
-      max-width: 110px;
-      text-overflow: ellipsis;
+      max-width: 140px;
       cursor: pointer;
       -webkit-appearance: none;
       outline: none;
+      transition:
+        border-color 0.18s ease,
+        box-shadow 0.18s ease,
+        background-color 0.18s ease,
+        color 0.18s ease;
     }
     .device-picker:hover { border-color: var(--text-tertiary); }
-    .device-picker:focus { border-color: var(--blue); }
+    .device-picker:focus,
+    .device-picker:focus-visible {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--focus-ring);
+    }
 
     .btn-icon {
-      padding: 6px;
-      line-height: 0;
-      border: none !important;
-      background: transparent !important;
+      padding: 4px 7px;
+      font-size: 15px;
+      line-height: 1;
+      border: none;
+      background: transparent;
       color: var(--text-tertiary);
       border-radius: 6px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s ease, color 0.15s ease;
     }
-    .btn-icon svg { display: block; }
-    .btn-icon:hover { background: var(--bg-hover) !important; color: var(--text); }
+    .btn-icon:hover { background: var(--bg-hover); color: var(--text-secondary); }
+    .btn-icon:focus-visible {
+      outline: none;
+      background: var(--bg-hover);
+    }
 
     /* ── Upcoming meeting ── */
     .upcoming {
-      display: flex;
+      display: none;
       align-items: center;
       gap: 10px;
       padding: 10px 16px;
-      background: rgba(99, 145, 179, 0.10);
-      border-bottom: 1px solid rgba(99, 145, 179, 0.18);
+      background: var(--green-tint-soft);
+      border-bottom: 1px solid var(--green-border);
     }
+    .upcoming.active { display: flex; }
 
-    .upcoming-icon {
-      flex-shrink: 0;
-      width: 18px;
-      height: 18px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--accent);
-    }
-    .upcoming-icon svg { display: block; }
+    .upcoming-icon { font-size: 16px; flex-shrink: 0; }
 
     .upcoming-info { flex: 1; min-width: 0; }
 
@@ -2403,21 +2172,11 @@
       align-items: flex-start;
       gap: 10px;
       padding: 12px 16px;
-      background: rgba(70, 192, 114, 0.08);
-      border-bottom: 1px solid rgba(70, 192, 114, 0.12);
+      background: var(--green-tint-soft);
+      border-bottom: 1px solid var(--green-border);
     }
     .call-detected.active { display: flex; }
-    .call-detected-icon {
-      flex-shrink: 0;
-      width: 18px;
-      height: 18px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--green);
-      margin-top: 1px;
-    }
-    .call-detected-icon svg { display: block; }
+    .call-detected-icon { font-size: 16px; flex-shrink: 0; }
     .call-detected-info { flex: 1; min-width: 0; }
     .call-detected-title { font-size: 13px; font-weight: 600; color: var(--text); }
     .call-detected-subtitle { font-size: 11px; color: var(--green); font-weight: 600; margin-top: 2px; }
@@ -2430,8 +2189,8 @@
       align-items: center;
       gap: 12px;
       padding: 10px 16px;
-      background: rgba(99, 145, 179, 0.08);
-      border-bottom: 1px solid rgba(99, 145, 179, 0.12);
+      background: var(--green-tint-soft);
+      border-bottom: 1px solid var(--green-border);
     }
     .update-banner.active { display: flex; animation: processing-enter 0.3s ease-out; }
     .update-banner-info { flex: 1; min-width: 0; }
@@ -2443,14 +2202,14 @@
       font-size: 11px;
       border-radius: 999px;
       padding: 4px 8px;
-      background: rgba(255,255,255,0.05);
+      background: var(--surface-fill-hover);
       color: var(--text-secondary);
-      border: 1px solid rgba(255,255,255,0.08);
+      border: 1px solid var(--neutral-border);
     }
     .call-health-chip.live {
       color: var(--green);
-      border-color: rgba(70, 192, 114, 0.3);
-      background: rgba(70, 192, 114, 0.08);
+      border-color: var(--green-border);
+      background: var(--green-tint-soft);
     }
     .call-detected-actions {
       display: flex;
@@ -2459,21 +2218,177 @@
       flex-shrink: 0;
       margin-left: 8px;
     }
-  </style>
+      .ui-hidden {
+        display: none;
+      }
+
+      .is-hidden {
+        display: none;
+      }
+
+      .footer-hidden {
+        display: none;
+      }
+
+      .btn {
+        transition: transform 0.17s ease, background-color 0.17s ease, border-color 0.17s ease, color 0.17s ease, opacity 0.17s ease, box-shadow 0.17s ease;
+      }
+
+      .btn-icon {
+        transition: transform 0.17s ease, background-color 0.17s ease, color 0.17s ease, box-shadow 0.17s ease;
+      }
+
+      .btn-icon:focus-visible,
+      .btn:focus-visible {
+        outline: 0;
+        box-shadow: 0 0 0 2px var(--info-ring);
+      }
+
+      .btn:hover,
+      .btn-icon:hover {
+        transform: translateY(-1px);
+      }
+
+      .recall-panel {
+        border-radius: 16px;
+        padding: 16px;
+        gap: 12px;
+      }
+
+      .recall-header {
+        border-radius: 12px;
+      }
+
+      .recall-terminal {
+        border-radius: 14px;
+        gap: 12px;
+      }
+
+      .recall-close {
+        transition: transform 0.17s ease, background-color 0.17s ease, color 0.17s ease, box-shadow 0.17s ease;
+      }
+
+      .audio-viz .bar {
+        opacity: 0.62;
+      }
+
+      .settings-card {
+        width: min(580px, 100%);
+        max-height: calc(100vh - 40px);
+      }
+
+      .settings-title {
+        font-size: 20px;
+        font-family: var(--font-display);
+      }
+
+      .settings-section {
+        margin-bottom: 16px;
+      }
+
+      .settings-section-inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+      }
+
+      .settings-section-inline-tight {
+        margin-top: 4px;
+      }
+
+      .settings-shortcut-key {
+        min-width: 140px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+
+      .settings-hint-link {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        cursor: pointer;
+      }
+
+      .settings-field {
+        margin-top: 6px;
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: var(--neutral-tint);
+        border: 1px solid var(--neutral-border);
+        color: var(--text);
+        font-size: 13px;
+        box-sizing: border-box;
+      }
+
+      .settings-meta-inline {
+        margin-bottom: 6px;
+        margin-top: 4px;
+      }
+
+      .settings-compact-meta {
+        margin-top: -8px;
+        margin-bottom: 8px;
+      }
+
+      .settings-config-path {
+        font-family: var(--font-mono);
+        opacity: 0.7;
+      }
+
+      .settings-storage-meta {
+        font-size: 13px;
+        color: var(--text-secondary);
+        line-height: 1.8;
+        padding: 0 4px;
+      }
+
+      .settings-control-group {
+        flex: 1;
+      }
+
+      .settings-model-status {
+        flex: 1;
+        margin: 0;
+      }
+
+      .settings-footer {
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+        color: var(--text-tertiary);
+        line-height: 1.45;
+      }
+
+      .about-footer-small {
+        font-size: 11px;
+      }
+
+      .settings-section-tight {
+        margin-bottom: 8px;
+      }
+
+      .download-progress {
+        display: none;
+      }
+
+      .download-progress.is-visible {
+        display: block;
+      }
+
+    </style>
 </head>
 <body>
   <div class="app-left">
   <!-- Header -->
   <div class="header">
     <div class="brand">
-      <div class="brand-mark" aria-hidden="true"></div>
       <div class="brand-copy">
         <div class="brand-label">Minutes</div>
         <div class="brand-sub">Conversation memory for humans and agents</div>
       </div>
     </div>
     <div class="header-actions">
-      <button class="btn btn-icon" id="btn-settings" title="Settings (⌘,)" aria-label="Settings"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+      <button class="btn btn-icon" id="btn-settings" title="Settings (⌘,)">⚙</button>
       <button class="header-chip dictation-shortcut" id="dictation-shortcut-chip">Dictate</button>
       <button class="header-chip readiness" id="btn-readiness">Readiness</button>
       <button class="header-chip" id="btn-jobs">Jobs <span id="jobs-count">0</span></button>
@@ -2540,11 +2455,11 @@
         <div class="output-notice-title" id="output-notice-title">Saved meeting</div>
         <div class="output-notice-detail" id="output-notice-detail"></div>
         <div class="output-notice-path" id="output-notice-path"></div>
-      </div>
-      <div class="output-notice-actions">
-        <button class="btn btn-secondary btn-sm" id="btn-open-output">Open</button>
-        <button class="btn btn-secondary btn-sm" id="btn-open-output-folder">Reveal</button>
-        <button class="btn btn-secondary btn-sm" id="btn-dismiss-output" aria-label="Dismiss">×</button>
+        <div class="output-notice-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-open-output">Open</button>
+          <button class="btn btn-secondary btn-sm" id="btn-open-output-folder">Show in Folder</button>
+          <button class="btn btn-secondary btn-sm" id="btn-dismiss-output">Dismiss</button>
+        </div>
       </div>
     </div>
   </div>
@@ -2560,12 +2475,11 @@
   <!-- Search -->
   <div class="search-wrap search-icon">
     <input class="search-box" type="text" placeholder="Search meetings, memos, and dictations..." id="search-input" />
-    <span class="search-kbd" aria-hidden="true">⌘K</span>
   </div>
 
   <!-- Upcoming meeting suggestion -->
-  <div class="upcoming" id="upcoming" style="display: none;">
-    <div class="upcoming-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+  <div class="upcoming" id="upcoming">
+    <div class="upcoming-icon">📅</div>
     <div class="upcoming-info">
       <div class="upcoming-title" id="upcoming-title"></div>
       <div class="upcoming-time" id="upcoming-time"></div>
@@ -2575,7 +2489,7 @@
 
   <!-- Call detected banner -->
   <div class="call-detected" id="call-detected-banner">
-    <div class="call-detected-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+    <div class="call-detected-icon">📞</div>
     <div class="call-detected-info">
       <div class="call-detected-title" id="call-detected-title">Call detected</div>
       <div class="call-detected-subtitle" id="call-detected-subtitle">Ready to record this call</div>
@@ -2605,33 +2519,29 @@
 
   <!-- Meeting list -->
   <div class="meetings-scroll" id="meetings-scroll">
-    <div class="list-skeleton" aria-hidden="true">
-      <div class="skeleton-section">
-        <div class="skeleton-label"></div>
-        <div class="skeleton-row"><div class="skeleton-bar title"></div><div class="skeleton-bar meta"></div></div>
-        <div class="skeleton-row"><div class="skeleton-bar title medium"></div><div class="skeleton-bar meta"></div></div>
-        <div class="skeleton-row"><div class="skeleton-bar title short"></div><div class="skeleton-bar meta"></div></div>
-      </div>
-      <div class="skeleton-section">
-        <div class="skeleton-label"></div>
-        <div class="skeleton-row"><div class="skeleton-bar title medium"></div><div class="skeleton-bar meta"></div></div>
-        <div class="skeleton-row"><div class="skeleton-bar title"></div><div class="skeleton-bar meta"></div></div>
-      </div>
+    <div class="empty-state">
+      <div class="title">No meetings yet</div>
+      <div class="sub">Record your first conversation to get started.</div>
     </div>
   </div>
 
   <!-- Footer -->
   <div class="footer" id="footer">
     <div class="footer-actions">
-      <div class="footer-record-group">
+      <div class="footer-action-primary">
         <button class="btn btn-primary" id="btn-record">Start Recording</button>
+      </div>
+      <div class="footer-device-picker">
+        <div class="footer-device-label">Microphone</div>
         <select id="device-picker" class="device-picker" title="Select microphone">
           <option value="">System Default</option>
         </select>
       </div>
-      <button class="btn btn-secondary" id="btn-live" title="Start live transcription — ask your agent in Recall for coaching" aria-label="Start live transcription">Live</button>
-      <button class="btn btn-secondary" id="btn-quick-thought">Quick Thought</button>
-      <button class="btn btn-secondary" id="btn-assistant" aria-expanded="false">Recall <span class="recall-nudge" id="recall-nudge" aria-label="Recall has new content"></span></button>
+      <div class="footer-action-secondary">
+        <button class="btn btn-secondary" id="btn-live" title="Start live transcription — ask your agent in Recall for coaching" aria-label="Start live transcription">Live</button>
+        <button class="btn btn-secondary" id="btn-quick-thought">Quick Thought</button>
+        <button class="btn btn-secondary" id="btn-assistant" aria-expanded="false">Recall <span class="recall-nudge" id="recall-nudge" aria-label="Recall has new content"></span></button>
+      </div>
     </div>
   </div>
   </div><!-- end .app-left -->
@@ -2645,8 +2555,8 @@
         <span class="recall-context-label" id="recall-context-label"></span>
       </div>
       <div class="recall-header-actions">
-        <button class="btn btn-secondary btn-sm" id="btn-recall-end" style="display:none;">End Session</button>
-        <button class="recall-close" id="btn-recall-close" title="Close panel" aria-label="Close panel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <button class="btn btn-secondary btn-sm recall-end-btn" id="btn-recall-end">End Session</button>
+        <button class="recall-close" id="btn-recall-close" title="Close panel">&times;</button>
       </div>
     </div>
     <div class="recall-note" id="recall-note">
@@ -2655,11 +2565,11 @@
         <button class="btn btn-secondary btn-sm" id="btn-recall-note-save">Save</button>
       </div>
     </div>
-    <div class="recall-status" id="recall-loading" style="display:none;">
+  <div class="recall-status" id="recall-loading">
       <div class="processing-spinner" aria-hidden="true"></div>
-      <span>Spinning up your agent...</span>
+      <span>Starting Recall...</span>
     </div>
-    <div class="recall-terminal" id="recall-terminal-container"></div>
+    <div class="recall-terminal hidden" id="recall-terminal-container"></div>
     <div class="recall-exit-banner" id="recall-exit-banner">
       Session ended.
       <button class="btn btn-secondary btn-sm" id="btn-recall-restart">Restart</button>
@@ -2668,8 +2578,8 @@
 
   <!-- In-app meeting detail view -->
   <div class="detail-overlay" id="detail-overlay">
-    <div class="detail-card" role="dialog" aria-modal="true" aria-labelledby="detail-title" style="position:relative;">
-      <button class="detail-close-x" id="btn-detail-close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    <div class="detail-card" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+      <button class="detail-close-x" id="btn-detail-close" aria-label="Close">&times;</button>
       <div class="detail-header">
         <div class="detail-header-copy">
           <div class="detail-title" id="detail-title">Meeting</div>
@@ -2739,7 +2649,6 @@
     <div class="about-card" role="dialog" aria-modal="true" aria-labelledby="about-title">
       <div class="about-top">
         <div class="about-brand">
-          <div class="brand-mark" aria-hidden="true"></div>
           <div class="about-copy">
             <h2 id="about-title">Minutes</h2>
             <p>Local-first conversation memory that stays useful in the tray, the terminal, and inside agent workflows.</p>
@@ -2795,9 +2704,9 @@
 
   <!-- Settings -->
   <div class="about-overlay" id="settings-overlay">
-    <div class="about-card" role="dialog" aria-modal="true" aria-labelledby="settings-title" style="width: min(580px, 100%); max-height: calc(100vh - 40px);">
+    <div class="about-card settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="about-top">
-        <h2 id="settings-title" style="font-size: 20px; font-family: var(--font-display);">Settings</h2>
+        <h2 id="settings-title" class="settings-title">Settings</h2>
         <button class="btn btn-secondary btn-sm" id="btn-settings-close">Close</button>
       </div>
 
@@ -2820,9 +2729,9 @@
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">Quick Thought shortcut</div>
-            <div class="settings-shortcut-row">
-              <button id="shortcut-recorder-quick_thought" class="btn btn-secondary btn-sm shortcut-recorder-btn" style="min-width: 140px; font-family: var(--font-mono); font-size: 12px;" data-slot="quick_thought">&#8984; Shift M</button>
-              <span class="special-key-link" style="font-size: 11px; color: var(--text-tertiary); cursor: pointer;" data-slot="quick_thought">or <u>Caps Lock</u> / <u>fn</u></span>
+            <div class="settings-section-inline">
+              <button id="shortcut-recorder-quick_thought" class="btn btn-secondary btn-sm shortcut-recorder-btn settings-shortcut-key" data-slot="quick_thought">&#8984; Shift M</button>
+              <span class="special-key-link settings-hint-link" data-slot="quick_thought">or <u>Caps Lock</u> / <u>fn</u></span>
             </div>
             <div class="about-controls-meta" id="shortcut-status-quick_thought">Hold to record a quick thought, or tap to lock and tap again to stop.</div>
           </div>
@@ -2837,9 +2746,9 @@
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">Dictation shortcut</div>
-            <div class="settings-shortcut-row">
-              <button id="shortcut-recorder-dictation" class="btn btn-secondary btn-sm shortcut-recorder-btn" style="min-width: 140px; font-family: var(--font-mono); font-size: 12px;" data-slot="dictation">&#8984; Shift Space</button>
-              <span class="special-key-link" style="font-size: 11px; color: var(--text-tertiary); cursor: pointer;" data-slot="dictation">or <u>Caps Lock</u> / <u>fn</u></span>
+            <div class="settings-section-inline">
+              <button id="shortcut-recorder-dictation" class="btn btn-secondary btn-sm shortcut-recorder-btn settings-shortcut-key" data-slot="dictation">&#8984; Shift Space</button>
+              <span class="special-key-link settings-hint-link" data-slot="dictation">or <u>Caps Lock</u> / <u>fn</u></span>
             </div>
             <div class="about-controls-meta" id="shortcut-status-dictation">Hold to dictate, or tap to lock and tap again to stop.</div>
           </div>
@@ -2848,7 +2757,7 @@
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">Dictation whisper model</div>
-            <select id="settings-dictation-model" class="settings-input">
+            <select id="settings-dictation-model" class="settings-field">
               <option value="tiny">tiny — fastest, lower quality</option>
               <option value="base">base — fast, decent quality (default)</option>
               <option value="small">small — good quality, slower</option>
@@ -2864,7 +2773,7 @@
           <div class="about-controls-group">
             <div class="about-controls-copy">Silence timeout</div>
             <div class="about-controls-meta">End dictation session after this much silence (after first speech).</div>
-            <select id="settings-dictation-silence" class="settings-input">
+            <select id="settings-dictation-silence" class="settings-field">
               <option value="1000">1 second</option>
               <option value="2000">2 seconds (default)</option>
               <option value="3000">3 seconds</option>
@@ -2880,7 +2789,7 @@
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">Keyboard shortcut</div>
-            <select class="shortcut-select" id="settings-live-shortcut-select" style="margin-top: 6px;">
+            <select class="shortcut-select settings-field" id="settings-live-shortcut-select">
               <option value="CmdOrCtrl+Shift+L">Cmd+Shift+L</option>
               <option value="CmdOrCtrl+Alt+L">Cmd+Option+L</option>
               <option value="CmdOrCtrl+Shift+T">Cmd+Shift+T</option>
@@ -2891,39 +2800,22 @@
         </div>
       </div>
 
-      <!-- Command palette -->
-      <div style="margin-bottom: 16px;">
-        <div class="about-item-title">COMMAND PALETTE</div>
-        <div class="about-controls">
-          <div class="about-controls-group">
-            <div class="about-controls-copy">Keyboard shortcut</div>
-            <select class="shortcut-select" id="settings-palette-shortcut-select" style="margin-top: 6px;">
-              <option value="CmdOrCtrl+Shift+K">Cmd+Shift+K</option>
-              <option value="CmdOrCtrl+Shift+O">Cmd+Shift+O</option>
-              <option value="CmdOrCtrl+Shift+U">Cmd+Shift+U</option>
-            </select>
-            <div class="about-controls-meta" id="settings-palette-shortcut-meta">Open the keyboard-first launcher from any app. Disable here if it conflicts with your IDE.</div>
-          </div>
-          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-palette-shortcut">Off</button>
-        </div>
-      </div>
-
       <!-- Transcription -->
       <div class="settings-section">
         <div class="about-item-title">TRANSCRIPTION</div>
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">Whisper model</div>
-            <select id="settings-whisper-model" class="settings-input">
+            <select id="settings-whisper-model" class="settings-field">
               <option value="tiny">tiny — 75 MB, fastest, lower quality</option>
               <option value="base">base — 148 MB, fast, decent quality</option>
               <option value="small">small — 466 MB, good quality (recommended)</option>
               <option value="medium">medium — 1.5 GB, great quality</option>
               <option value="large-v3">large-v3 — 3.1 GB, best quality</option>
             </select>
-            <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
-              <div class="about-controls-meta" id="settings-model-status" style="flex: 1; margin: 0;"></div>
-              <button class="btn btn-secondary btn-sm" id="btn-download-model" style="white-space: nowrap; display: none;">Download</button>
+            <div class="settings-section-inline settings-section-inline-tight">
+              <div class="about-controls-meta settings-model-status"></div>
+              <button class="btn btn-secondary btn-sm is-hidden" id="btn-download-model">Download</button>
             </div>
           </div>
         </div>
@@ -2931,7 +2823,7 @@
           <div class="about-controls-group">
             <div class="about-controls-copy">Transcription language</div>
             <div class="about-controls-meta">Leave this on Auto-detect for mixed or unknown audio. Pick a language only when Whisper is consistently guessing wrong.</div>
-            <select id="settings-whisper-language" class="settings-input">
+            <select id="settings-whisper-language" class="settings-field">
               <option value="">Auto-detect</option>
               <option value="af">Afrikaans</option>
               <option value="am">Amharic</option>
@@ -3048,8 +2940,8 @@
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">Automatic pipeline summarization</div>
-            <div class="about-controls-meta" style="margin-bottom: 6px;">By default, Claude summarizes your meetings conversationally via MCP — no configuration needed. Turn this on only if you want summaries generated automatically in the recording pipeline.</div>
-            <select id="settings-summarization-engine" style="width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: var(--text); font-size: 13px;">
+            <div class="about-controls-meta settings-meta-inline">By default, Claude summarizes your meetings conversationally via MCP — no configuration needed. Turn this on only if you want summaries generated automatically in the recording pipeline.</div>
+            <select id="settings-summarization-engine" class="settings-field">
               <option value="none">Off — Claude summarizes when you ask (recommended)</option>
               <option value="agent">Agent CLI — uses your Claude Code or Codex subscription</option>
               <option value="ollama">Ollama — local, free, runs on your machine</option>
@@ -3059,10 +2951,10 @@
             <div class="about-controls-meta" id="settings-summarization-status"></div>
           </div>
         </div>
-        <div class="about-controls" id="settings-agent-command-row" style="display: none;">
+        <div class="about-controls is-hidden" id="settings-agent-command-row">
           <div class="about-controls-group">
             <div class="about-controls-copy">Agent command</div>
-            <select id="settings-agent-command" class="settings-input">
+            <select id="settings-agent-command" class="settings-field">
             </select>
             <div class="about-controls-meta" id="settings-agent-command-status"></div>
           </div>
@@ -3080,14 +2972,14 @@
           <div class="about-controls-group">
             <div class="about-controls-copy">Polling interval</div>
             <div class="about-controls-meta">How often to check for active calls (seconds).</div>
-            <input type="number" id="settings-call-detection-polling-interval" min="1" class="settings-input">
+            <input type="number" id="settings-call-detection-polling-interval" min="1" class="settings-field">
           </div>
         </div>
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">Cooldown</div>
             <div class="about-controls-meta">Minutes to wait before re-triggering call detection.</div>
-            <input type="number" id="settings-call-detection-cooldown" min="0" class="settings-input">
+            <input type="number" id="settings-call-detection-cooldown" min="0" class="settings-field">
           </div>
         </div>
         <div class="about-controls">
@@ -3113,10 +3005,10 @@
           </div>
           <button class="btn btn-secondary btn-sm toggle-btn" id="settings-screen-context">Off</button>
         </div>
-        <div class="about-controls" id="settings-screen-interval-row" style="display: none;">
+        <div class="about-controls is-hidden" id="settings-screen-interval-row">
           <div class="about-controls-group">
             <div class="about-controls-copy">Screenshot interval</div>
-            <select id="settings-screen-interval" class="settings-input">
+            <select id="settings-screen-interval" class="settings-field">
               <option value="15">Every 15 seconds</option>
               <option value="30">Every 30 seconds</option>
               <option value="60">Every 60 seconds</option>
@@ -3129,14 +3021,14 @@
       <div class="settings-section">
         <div class="about-item-title">VAULT SYNC</div>
         <div class="about-controls">
-          <div class="about-controls-group" style="flex: 1;">
+          <div class="about-controls-group settings-control-group">
             <div class="about-controls-copy">Connect an Obsidian or Logseq vault</div>
             <div class="about-controls-meta" id="vault-status-detail">Checking...</div>
           </div>
-          <button class="btn btn-primary btn-sm" id="btn-vault-setup" style="white-space: nowrap;">Set Up Vault</button>
+          <button class="btn btn-primary btn-sm" id="btn-vault-setup">Set Up Vault</button>
         </div>
-        <div class="about-controls" id="vault-unlink-row" style="display: none;">
-          <div class="about-controls-copy" id="vault-active-path" style="font-family: var(--font-mono); font-size: 11px; opacity: 0.7;"></div>
+        <div class="about-controls is-hidden" id="vault-unlink-row">
+          <div class="about-controls-copy settings-config-path" id="vault-active-path"></div>
           <button class="btn btn-secondary btn-sm" id="btn-vault-unlink">Unlink</button>
         </div>
       </div>
@@ -3147,7 +3039,7 @@
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">AI agent for the Recall panel</div>
-            <select id="settings-agent" class="settings-input">
+            <select id="settings-agent" class="settings-field">
             </select>
             <div class="about-controls-meta" id="settings-agent-status"></div>
           </div>
@@ -3156,21 +3048,21 @@
           <div class="about-controls-copy">Auto-approve all tool calls</div>
           <button class="btn btn-secondary btn-sm toggle-btn" id="settings-skip-permissions">Off</button>
         </div>
-        <div class="about-controls-meta" id="settings-skip-permissions-hint" style="padding: 0 4px; margin-top: -8px; margin-bottom: 8px;"></div>
+        <div class="about-controls-meta settings-compact-meta" id="settings-skip-permissions-hint"></div>
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">Extra launch flags</div>
             <div class="about-controls-meta">Additional CLI arguments passed when starting the agent</div>
-            <input type="text" id="settings-agent-args" placeholder="e.g. --model sonnet" class="settings-input">
-            <div class="about-controls-meta" id="settings-agent-args-status" style="margin-top: 4px;"></div>
+            <input type="text" id="settings-agent-args" placeholder="e.g. --model sonnet" class="settings-field">
+            <div class="about-controls-meta settings-meta-inline" id="settings-agent-args-status"></div>
           </div>
         </div>
       </div>
 
       <!-- Storage -->
-      <div style="margin-bottom: 8px;">
+      <div class="settings-section settings-section-tight">
         <div class="about-item-title">STORAGE</div>
-        <div id="settings-storage-info" style="font-size: 13px; color: var(--text-secondary); line-height: 1.8; padding: 0 4px;">
+        <div id="settings-storage-info" class="settings-storage-meta">
           Loading...
         </div>
       </div>
@@ -3188,8 +3080,8 @@
         </div>
       </div>
 
-      <div class="about-footer" style="font-size: 11px;">
-        Config file: <span id="settings-config-path" style="font-family: var(--font-mono); opacity: 0.7;"></span>
+      <div class="about-footer settings-footer about-footer-small">
+        Config file: <span id="settings-config-path" class="settings-config-path"></span>
       </div>
     </div>
   </div>
@@ -3251,7 +3143,7 @@
 
     .onboarding-step.done .step-num {
       background: var(--green);
-      color: #000;
+      color: var(--success-contrast);
     }
 
     .step-title { font-size: 14px; font-weight: 500; flex: 1; }
@@ -3323,8 +3215,8 @@
     const detailOverlay = document.getElementById('detail-overlay');
     const detailTitle = document.getElementById('detail-title');
     const detailMeta = document.getElementById('detail-meta');
-    const detailScroll = document.getElementById('detail-scroll');
     const detailFeedback = document.getElementById('detail-feedback');
+    const detailScroll = document.getElementById('detail-scroll');
     const openExternalBtn = document.getElementById('btn-open-external');
     const aboutOverlay = document.getElementById('about-overlay');
     const notificationToggle = document.getElementById('btn-toggle-notifications');
@@ -3411,6 +3303,7 @@
 
     // History for smooth animation
     const barHeights = new Array(NUM_BARS).fill(3);
+
     function parentPath(path) {
       if (!path) return path;
       const normalized = path.replace(/[\\/]+$/, '');
@@ -3454,30 +3347,14 @@
       for (let i = 0; i < NUM_BARS - 1; i++) {
         barHeights[i] = barHeights[i + 1];
       }
-      // Map 0-100 to 3-28px without synthetic jitter so the waveform tracks
-      // actual audio levels instead of feeling theatrical.
-      barHeights[NUM_BARS - 1] = Math.max(3, Math.min(28, (level / 100) * 28));
+      // Map 0-100 to 3-28px with some randomness for natural feel
+      const jitter = level > 5 ? (Math.random() - 0.5) * level * 0.3 : 0;
+      barHeights[NUM_BARS - 1] = Math.max(3, Math.min(28, (level / 100) * 28 + jitter));
 
       for (let i = 0; i < NUM_BARS; i++) {
         bars[i].style.height = barHeights[i] + 'px';
         bars[i].style.opacity = barHeights[i] > 4 ? '0.7' : '0.3';
       }
-    }
-
-    function recordingVizLevel(status) {
-      const rawLevel = Number(status.audioLevel || 0);
-      if (rawLevel > 0) return rawLevel;
-
-      const callHealth = status.callCaptureHealth;
-      if (!callHealth) return 0;
-
-      const micLevel = Number(callHealth.mic_level || 0);
-      const callLevel = Number(callHealth.call_audio_level || 0);
-      if (micLevel > 0 || callLevel > 0) {
-        return Math.max(micLevel, callLevel);
-      }
-
-      return 0;
     }
 
     function playCue(name) {
@@ -3527,24 +3404,15 @@
       processingJobs = Array.isArray(jobs) ? jobs : [];
       processingJobsEl.replaceChildren();
 
-      const count = processingJobs.length;
-      processingBar.classList.toggle('single-job', count === 1);
-
-      if (!count) {
+      if (!processingJobs.length) {
         processingSummary.textContent = '';
         return;
       }
 
-      // For count === 1 the .single-job class hides the entire top row
-      // (.processing-row), so the per-job card is the only visible artifact.
-      // For count > 1 the top row stays visible — but checkStatus()
-      // unconditionally rewrites processingTitle/Stage/Elapsed each poll,
-      // so we only set processingSummary here. Don't write the other three:
-      // they'd be overwritten on the next tick anyway.
       processingSummary.textContent =
-        count > 1
-          ? `${count} recordings are cooking in the background.`
-          : '';
+        processingJobs.length > 1
+          ? `${processingJobs.length} recordings are cooking in the background.`
+          : 'You can keep recording while this finishes.';
 
       for (const job of processingJobs) {
         const card = document.createElement('div');
@@ -3582,15 +3450,7 @@
         card.appendChild(detail);
         card.appendChild(meta);
 
-        // Only show the Open button when there's something actually openable.
-        // While the job is queued/transcribing/summarizing/saving, the markdown
-        // file may exist on disk but its contents aren't readable yet — clicking
-        // would silently fail and the button flickers because the card re-renders
-        // every poll. Once state reaches transcript-only or complete, the file
-        // has stable content and the button appears.
-        const isOpenable = job.outputPath
-          && (job.state === 'transcript-only' || job.state === 'complete');
-        if (isOpenable) {
+        if (job.outputPath) {
           const actions = document.createElement('div');
           actions.className = 'processing-job-actions';
 
@@ -3786,7 +3646,6 @@
         const mode = status.recordingMode || 'meeting';
         isRecording = status.recording;
         isProcessing = !!status.processing;
-        document.body.classList.toggle('is-recording', !!isRecording);
         updateJobsChip(status.processingJobCount || 0);
         renderProcessingJobs(status.processingJobs || []);
         updateOutputNotice(status.latestOutput);
@@ -3820,10 +3679,9 @@
           isLiveTranscript = false;
           callBanner.classList.remove('active');
           if (activeCallSession) activeCallSession.dismissed = true;
-          syncMeetingRecordButtons();
-          footer.style.display = 'none';
+          footer.classList.add('footer-hidden');
           if (status.elapsed) recordingTime.textContent = status.elapsed;
-          updateViz(recordingVizLevel(status));
+          updateViz(status.audioLevel || 0);
 
           // Speed up polling when recording starts
           if (!wasRecording && !wasProcessing) {
@@ -3841,8 +3699,7 @@
           liveBar.classList.remove('active'); // T4
           isLiveTranscript = false;
           callBanner.classList.remove('active');
-          syncMeetingRecordButtons();
-          footer.style.display = '';
+          footer.classList.remove('footer-hidden');
           processingStage.textContent = status.processingStage || 'Preparing transcript...';
 
           // Start elapsed timer when processing begins
@@ -3878,7 +3735,7 @@
               recordingBar.classList.remove('active');
               processingBar.classList.remove('active');
               liveBar.classList.add('active');
-              footer.style.display = 'none';
+              footer.classList.add('footer-hidden');
               const n = liveStatus.line_count || 0;
               const d = Math.round(liveStatus.duration_secs || 0);
               const min = Math.floor(d / 60);
@@ -3904,12 +3761,11 @@
           processingSummary.textContent = '';
           processingJobsEl.replaceChildren();
           quickNote.classList.remove('active');
-          footer.style.display = '';
+          footer.classList.remove('footer-hidden');
 
           if (activeCallSession && !activeCallSession.dismissed) {
             callBanner.classList.add('active');
           }
-          syncMeetingRecordButtons();
 
           // Clear processing elapsed timer
           if (processingTimerInterval) { clearInterval(processingTimerInterval); processingTimerInterval = null; }
@@ -4254,31 +4110,9 @@
     });
 
     // ── Recording controls ──
-    async function startMeetingRecording(options = {}) {
-      const payload = {};
-      if (options.mode) payload.mode = options.mode;
-      if (options.title) payload.title = options.title;
-      if (options.language) payload.language = options.language;
-
-      const preferCallIntent =
-        options.mode !== 'quick-thought' &&
-        !options.intent &&
-        activeCallSession &&
-        !activeCallSession.dismissed &&
-        callBanner.classList.contains('active');
-
-      if (options.intent) {
-        payload.intent = options.intent;
-      } else if (preferCallIntent) {
-        payload.intent = 'call';
-      }
-
-      await invoke('cmd_start_recording', payload);
-    }
-
     document.getElementById('btn-record').addEventListener('click', async () => {
       try {
-        await startMeetingRecording();
+        await invoke('cmd_start_recording');
       } catch (e) {
         console.error('Record:', e);
       }
@@ -4572,6 +4406,13 @@
       detailOverlay.classList.remove('active');
       currentMeetingPath = null;
       currentMeetingDetail = null;
+      if (detailFeedbackTimer) {
+        clearTimeout(detailFeedbackTimer);
+        detailFeedbackTimer = null;
+      }
+      detailFeedback.hidden = true;
+      detailFeedback.className = 'detail-feedback';
+      detailFeedback.textContent = '';
     }
 
     function closeAbout() {
@@ -4680,8 +4521,10 @@
                     speakerLabel: attr.speaker_label,
                     name: newName,
                   });
-                  showDetailFeedback(result || `Confirmed: ${attr.speaker_label} = ${newName}`, 'success');
-                  // Refresh the detail view
+                  showDetailFeedback(
+                    result || `Confirmed ${attr.speaker_label} as ${newName}`,
+                    'success'
+                  );
                   await openMeetingDetail(detail.path);
                 } catch (e) {
                   console.error('Confirm speaker failed:', e);
@@ -4817,12 +4660,12 @@
       meetingsScroll.replaceChildren();
 
       if (!meetings || meetings.length === 0) {
-        footer.style.display = 'none';
+        footer.classList.add('footer-hidden');
         renderSetupEmptyState();
         return;
       }
 
-      footer.style.display = '';
+      footer.classList.remove('footer-hidden');
 
       const groups = groupByDate(meetings);
       for (const [label, items] of Object.entries(groups)) {
@@ -4882,21 +4725,7 @@
           chatBtn.className = 'meeting-chat-btn';
           chatBtn.setAttribute('aria-label', 'Discuss with Agent');
           chatBtn.setAttribute('title', 'Discuss with Agent');
-          const SVG_NS = 'http://www.w3.org/2000/svg';
-          const chatSvg = document.createElementNS(SVG_NS, 'svg');
-          chatSvg.setAttribute('width', '14');
-          chatSvg.setAttribute('height', '14');
-          chatSvg.setAttribute('viewBox', '0 0 24 24');
-          chatSvg.setAttribute('fill', 'none');
-          chatSvg.setAttribute('stroke', 'currentColor');
-          chatSvg.setAttribute('stroke-width', '2');
-          chatSvg.setAttribute('stroke-linecap', 'round');
-          chatSvg.setAttribute('stroke-linejoin', 'round');
-          chatSvg.setAttribute('aria-hidden', 'true');
-          const chatPath = document.createElementNS(SVG_NS, 'path');
-          chatPath.setAttribute('d', 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z');
-          chatSvg.appendChild(chatPath);
-          chatBtn.appendChild(chatSvg);
+          chatBtn.textContent = '\u279C';
           chatBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             await openRecall('meeting', m.path);
@@ -4960,7 +4789,7 @@
       if (hasModel) {
         root.querySelector('#step-model').classList.add('done');
         root.querySelector('#step-model-status').textContent = 'Done';
-        root.querySelector('#step-model-body').style.display = 'none';
+        root.querySelector('#step-model-body').classList.add('ui-hidden');
         root.querySelector('#step-first-artifact').classList.remove('disabled');
       }
 
@@ -4972,7 +4801,7 @@
           const progress = root.querySelector('.download-progress');
           const fill = root.querySelector('.progress-fill');
           const text = root.querySelector('.progress-text');
-          progress.style.display = 'block';
+          progress.classList.add('is-visible');
 
           // Animate progress (curl doesn't give us real progress via invoke)
           fill.style.width = '20%';
@@ -4991,7 +4820,7 @@
 
             root.querySelector('#step-model').classList.add('done');
             root.querySelector('#step-model-status').textContent = 'Done';
-            root.querySelector('#step-model-body').style.display = 'none';
+            root.querySelector('#step-model-body').classList.add('ui-hidden');
 
             currentSetup = { ...currentSetup, hasModel: true, needsSetup: false };
             root.querySelector('#step-first-artifact').classList.remove('disabled');
@@ -5017,78 +4846,65 @@
     function renderSetupEmptyState() {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
-      const hasModel = !!currentSetup?.hasModel;
-
-      if (!hasModel) {
-        // Real gate: model has to be downloaded before anything works.
-        empty.innerHTML = `
-          <div class="onboarding-content">
-            <div class="onboarding-icon">🎙</div>
-            <h2>Welcome to Minutes</h2>
-            <p class="onboarding-sub">Download the speech model once. Everything else stays local.</p>
-            <div class="onboarding-steps">
-              <div class="onboarding-step" id="step-model">
-                <div class="step-header">
-                  <span class="step-num">1</span>
-                  <span class="step-title">Download speech model</span>
-                  <span class="step-status" id="step-model-status"></span>
-                </div>
-                <div class="step-body" id="step-model-body">
-                  <p>Choose a model size:</p>
-                  <div class="model-options">
-                    <button class="btn btn-secondary btn-sm model-btn" data-model="tiny">Tiny (75 MB, fast)</button>
-                    <button class="btn btn-primary btn-sm model-btn" data-model="base">Base (141 MB, recommended)</button>
-                    <button class="btn btn-secondary btn-sm model-btn" data-model="small">Small (466 MB, best accuracy)</button>
-                  </div>
-                  <div class="download-progress" style="display: none;">
-                    <div class="progress-bar"><div class="progress-fill"></div></div>
-                    <span class="progress-text">Downloading...</span>
-                  </div>
-                </div>
+      empty.innerHTML = `
+        <div class="onboarding-content">
+          <h2>Welcome to Minutes</h2>
+          <p class="onboarding-sub">Download the model once, then create one short recording. The moment it saves, this becomes your real meeting list.</p>
+          <div class="onboarding-steps">
+            <div class="onboarding-step" id="step-model">
+              <div class="step-header">
+                <span class="step-num">1</span>
+                <span class="step-title">Download speech model</span>
+                <span class="step-status" id="step-model-status"></span>
               </div>
-              <div class="onboarding-step disabled" id="step-first-artifact">
-                <div class="step-header">
-                  <span class="step-num">2</span>
-                  <span class="step-title">Capture your first conversation</span>
+              <div class="step-body" id="step-model-body">
+                <p>Choose a model size:</p>
+                <div class="model-options">
+                  <button class="btn btn-secondary btn-sm model-btn" data-model="tiny">Tiny (75 MB, fast)</button>
+                  <button class="btn btn-primary btn-sm model-btn" data-model="base">Base (141 MB, recommended)</button>
+                  <button class="btn btn-secondary btn-sm model-btn" data-model="small">Small (466 MB, best accuracy)</button>
                 </div>
-                <div class="step-body">
-                  <p>Once the model is ready, hit Start Recording. Anything you capture lives only on this Mac.</p>
+                <div class="download-progress ui-hidden">
+                  <div class="progress-bar"><div class="progress-fill"></div></div>
+                  <span class="progress-text">Downloading...</span>
                 </div>
               </div>
             </div>
-          </div>`;
-      } else {
-        // Model is installed, just no recordings yet. One quiet card,
-        // one CTA, no multi-step gauntlet. Disappears the moment they
-        // record anything.
-        empty.classList.add('first-record');
-        empty.innerHTML = `
-          <div class="first-record-card">
-            <div class="first-record-mark" aria-hidden="true"></div>
-            <div class="first-record-title">Ready when you are.</div>
-            <div class="first-record-sub">Hit <kbd>Start Recording</kbd> below — or press <kbd>⌘R</kbd> — to capture your first conversation. Everything stays on this Mac.</div>
-            <div class="first-record-tips">
-              <span class="first-record-tip"><kbd>⌘K</kbd> Search</span>
-              <span class="first-record-tip"><kbd>⌘⇧M</kbd> Quick thought</span>
-              <span class="first-record-tip"><kbd>⌘⇧L</kbd> Live transcript</span>
+            <div class="onboarding-step disabled" id="step-first-artifact">
+              <div class="step-header">
+                <span class="step-num">2</span>
+                <span class="step-title">Create your first artifact</span>
+              </div>
+              <div class="step-body">
+                <p>Make a quick 10-second test recording. Say one sentence, stop, and let Minutes save its first markdown artifact.</p>
+                <button class="btn btn-primary" id="btn-start-first-recording">Record a 10-second test</button>
+              </div>
             </div>
-          </div>`;
-      }
-
+            <div class="onboarding-step disabled">
+              <div class="step-header">
+                <span class="step-num">3</span>
+                <span class="step-title">Watch it appear here</span>
+              </div>
+              <div class="step-body">
+                <p>As soon as the test recording finishes processing, this setup card disappears and your first saved artifact takes its place.</p>
+              </div>
+            </div>
+          </div>
+        </div>`;
       meetingsScroll.appendChild(empty);
-      if (!hasModel) setupOnboarding(empty);
+      setupOnboarding(empty);
     }
 
     // ── Upcoming meetings ──
     async function checkUpcoming() {
+      const upcoming = document.getElementById('upcoming');
       if (!desktopCapabilities.supportsCalendarIntegration) {
-        document.getElementById('upcoming').style.display = 'none';
+        upcoming.classList.remove('active');
         return;
       }
       if (isRecording) return;
       try {
         const events = await invoke('cmd_upcoming_meetings');
-        const upcoming = document.getElementById('upcoming');
         if (events && events.length > 0) {
           const next = events[0];
           document.getElementById('upcoming-title').textContent = next.title;
@@ -5098,22 +4914,19 @@
             mins === 1 ? 'In 1 minute' :
             mins < 60 ? `In ${mins} minutes` :
             `In ${Math.floor(mins / 60)}h ${mins % 60}m`;
-          upcoming.style.display = 'flex';
+          upcoming.classList.add('active');
 
           document.getElementById('btn-record-upcoming').onclick = async () => {
             try {
-              await startMeetingRecording();
+              await invoke('cmd_start_recording');
             } catch (e) { console.error('Record:', e); }
           };
-          syncMeetingRecordButtons();
         } else {
-          upcoming.style.display = 'none';
-          syncMeetingRecordButtons();
+          upcoming.classList.remove('active');
         }
       } catch (e) {
         // Calendar access may not be granted — silently hide
-        document.getElementById('upcoming').style.display = 'none';
-        syncMeetingRecordButtons();
+        upcoming.classList.remove('active');
       }
     }
 
@@ -5132,37 +4945,6 @@
 
     // ⌘, keyboard shortcut
     document.addEventListener('keydown', (e) => { if (e.metaKey && e.key === ',') { e.preventDefault(); openSettings(); } });
-
-    // ⌘K focuses the search input. Skip when an editable field is focused
-    // so it doesn't steal in-progress text from the recall quick-note,
-    // settings inputs, or any other text entry — the only exception is
-    // the search input itself, where ⌘K becomes a "select all" repeat.
-    document.addEventListener('keydown', (e) => {
-      if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;
-      if (e.key !== 'k' && e.key !== 'K') return;
-      const active = document.activeElement;
-      const tag = (active?.tagName || '').toLowerCase();
-      const isEditable = (tag === 'input' || tag === 'textarea' || tag === 'select')
-        && active !== searchInput;
-      if (isEditable) return;
-      e.preventDefault();
-      searchInput.focus();
-      searchInput.select();
-    });
-
-    // ⌘R toggles recording (the first-record card teaches this shortcut,
-    // so wire it to whatever the primary record button is currently doing).
-    // No-op when an input is focused so it doesn't steal text-field reload
-    // intent (text fields don't reload in this app, but the principle holds).
-    document.addEventListener('keydown', (e) => {
-      if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;
-      if (e.key !== 'r' && e.key !== 'R') return;
-      const tag = (document.activeElement?.tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-      e.preventDefault();
-      const recordBtn = document.getElementById('btn-record');
-      if (recordBtn && !recordBtn.disabled) recordBtn.click();
-    });
 
     async function loadSettings() {
       try {
@@ -5197,14 +4979,14 @@
         document.getElementById('settings-model-status').textContent = isDownloaded
           ? 'Downloaded: ' + dl.join(', ')
           : dl.length ? 'Downloaded: ' + dl.join(', ') + '  •  "' + selectedModel + '" not yet downloaded' : 'No models downloaded yet.';
-        document.getElementById('btn-download-model').style.display = isDownloaded ? 'none' : '';
+        document.getElementById('btn-download-model').classList.toggle('is-hidden', isDownloaded);
         document.getElementById('settings-whisper-language').value = s.transcription.language || '';
         setSettingsToggle('settings-diarization', s.diarization.engine !== 'none'); // "auto" shows as On
         document.getElementById('settings-summarization-engine').value = s.summarization.engine;
         updateSumStatus(s);
         // Agent command picker (visible when engine = "agent")
         const agentCmdRow = document.getElementById('settings-agent-command-row');
-        agentCmdRow.style.display = s.summarization.engine === 'agent' ? '' : 'none';
+        agentCmdRow.classList.toggle('is-hidden', s.summarization.engine !== 'agent');
         try {
         const agentCmdSel = document.getElementById('settings-agent-command');
         const sumAgents = await invoke('cmd_list_agents');
@@ -5219,7 +5001,7 @@
         } catch(e) { console.error('agent command picker:', e); }
         setSettingsToggle('settings-screen-share', Boolean(s.privacy?.hide_from_screen_share));
         setSettingsToggle('settings-screen-context', s.screen_context.enabled);
-        document.getElementById('settings-screen-interval-row').style.display = s.screen_context.enabled ? '' : 'none';
+        document.getElementById('settings-screen-interval-row').classList.toggle('is-hidden', !s.screen_context.enabled);
         document.getElementById('settings-screen-interval').value = String(s.screen_context.interval_secs);
         try {
         const agents = await invoke('cmd_list_agents');
@@ -5242,8 +5024,8 @@
         const skipRow = document.getElementById('settings-skip-permissions-row');
         const skipHint = document.getElementById('settings-skip-permissions-hint');
         const supportsSkip = ['claude', 'codex'].includes(s.assistant.agent);
-        skipRow.style.display = supportsSkip ? '' : 'none';
-        skipHint.style.display = supportsSkip ? '' : 'none';
+        skipRow.classList.toggle('is-hidden', !supportsSkip);
+        skipHint.classList.toggle('is-hidden', !supportsSkip);
         document.getElementById('settings-agent-args').value = extraArgs.join(' ');
         document.getElementById('settings-agent-args-status').textContent = extraArgs.length ? extraArgs.length + ' flag(s)' : '';
         } catch(e) { console.error('agent flags:', e); }
@@ -5319,19 +5101,6 @@
             }
           }
         }
-        // Re-fetch palette shortcut state from the backend on every
-        // settings overlay open. Codex pass 3 + claude pass 3 P2:
-        // the previous code only loaded palette state once at page
-        // bootstrap (~line 5050), so any setting change made via
-        // CLI, config edit, or another window left the overlay
-        // showing stale toggle state. Refreshing here keeps the
-        // overlay consistent with the live backend.
-        const paletteSettings = await invoke('cmd_palette_settings').catch(() => null);
-        if (paletteSettings) {
-          setSettingsToggle('settings-palette-shortcut', Boolean(paletteSettings.enabled));
-          const paletteSelect = document.getElementById('settings-palette-shortcut-select');
-          if (paletteSelect) paletteSelect.value = paletteSettings.shortcut;
-        }
       } catch (e) { console.error('loadSettings:', e); }
       // Always load these, even if other settings fail
       loadStorageStats();
@@ -5352,13 +5121,13 @@
           setupBtn.textContent = 'Reconfigure';
           setupBtn.classList.remove('btn-primary');
           setupBtn.classList.add('btn-secondary');
-          unlinkRow.style.display = '';
+          unlinkRow.classList.remove('is-hidden');
           activePath.textContent = v.strategy + ': ' + v.path;
         } else if (v.enabled) {
           detail.textContent = v.detail;
           detail.style.color = 'var(--yellow, var(--orange))';
           setupBtn.textContent = 'Fix';
-          unlinkRow.style.display = '';
+          unlinkRow.classList.remove('is-hidden');
           activePath.textContent = v.path;
         } else {
           detail.textContent = 'Not configured. Meetings stay in ~/meetings/ — connect a vault to see them in Obsidian.';
@@ -5366,7 +5135,7 @@
           setupBtn.textContent = 'Set Up Vault';
           setupBtn.classList.add('btn-primary');
           setupBtn.classList.remove('btn-secondary');
-          unlinkRow.style.display = 'none';
+          unlinkRow.classList.add('is-hidden')
         }
       } catch (e) { console.error('loadVaultStatus:', e); }
     }
@@ -5463,7 +5232,7 @@
       document.getElementById('settings-model-status').textContent = isDownloaded
         ? 'Downloaded: ' + dl.join(', ')
         : dl.length ? 'Downloaded: ' + dl.join(', ') + '  •  "' + e.target.value + '" not yet downloaded' : 'No models downloaded yet.';
-      document.getElementById('btn-download-model').style.display = isDownloaded ? 'none' : '';
+      document.getElementById('btn-download-model').classList.toggle('is-hidden', isDownloaded);
     });
     document.getElementById('btn-download-model').addEventListener('click', async () => {
       const model = document.getElementById('settings-whisper-model').value;
@@ -5475,7 +5244,7 @@
       try {
         const result = await invoke('cmd_download_model', { model });
         status.textContent = result;
-        btn.style.display = 'none';
+        btn.classList.add('is-hidden');
       } catch (e) {
         status.textContent = 'Download failed: ' + e;
       }
@@ -5494,7 +5263,7 @@
     });
     document.getElementById('settings-summarization-engine').addEventListener('change', async (e) => {
       await invoke('cmd_set_setting', {section:'summarization',key:'engine',value:e.target.value});
-      document.getElementById('settings-agent-command-row').style.display = e.target.value === 'agent' ? '' : 'none';
+      document.getElementById('settings-agent-command-row').classList.toggle('is-hidden', e.target.value !== 'agent');
       const s = await invoke('cmd_get_settings'); updateSumStatus(s);
     });
     document.getElementById('settings-agent-command').addEventListener('change', async (e) => {
@@ -5507,14 +5276,14 @@
       const next = !s.screen_context.enabled;
       await invoke('cmd_set_setting', {section:'screen_context',key:'enabled',value:String(next)});
       setSettingsToggle('settings-screen-context', next);
-      document.getElementById('settings-screen-interval-row').style.display = next ? '' : 'none';
+      document.getElementById('settings-screen-interval-row').classList.toggle('is-hidden', !next);
     });
     document.getElementById('settings-screen-interval').addEventListener('change', (e) => invoke('cmd_set_setting', {section:'screen_context',key:'interval_secs',value:e.target.value}));
     document.getElementById('settings-agent').addEventListener('change', async (e) => {
       await invoke('cmd_set_setting', {section:'assistant',key:'agent',value:e.target.value});
       const supportsSkip = ['claude', 'codex'].includes(e.target.value);
-      document.getElementById('settings-skip-permissions-row').style.display = supportsSkip ? '' : 'none';
-      document.getElementById('settings-skip-permissions-hint').style.display = supportsSkip ? '' : 'none';
+      document.getElementById('settings-skip-permissions-row').classList.toggle('is-hidden', !supportsSkip);
+      document.getElementById('settings-skip-permissions-hint').classList.toggle('is-hidden', !supportsSkip);
     });
     // Helper: rebuild agent_args from toggle + text field and save
     async function saveAgentArgs() {
@@ -5637,58 +5406,6 @@
     invoke('cmd_live_shortcut_settings').then(settings => {
       setSettingsToggle('settings-live-shortcut', settings.enabled);
       const select = document.getElementById('settings-live-shortcut-select');
-      if (select) select.value = settings.shortcut;
-    }).catch(() => {});
-
-    // ── Command palette shortcut settings ──
-    function showPaletteShortcutMessage(text, isError) {
-      const meta = document.getElementById('settings-palette-shortcut-meta');
-      if (!meta) return;
-      meta.textContent = text;
-      meta.style.color = isError ? '#e5534b' : '';
-    }
-    document.getElementById('settings-palette-shortcut').addEventListener('click', async () => {
-      const select = document.getElementById('settings-palette-shortcut-select');
-      const currentEnabled = document.getElementById('settings-palette-shortcut').textContent === 'On';
-      try {
-        const settings = await invoke('cmd_set_palette_shortcut', {
-          enabled: !currentEnabled,
-          shortcut: select.value,
-        });
-        setSettingsToggle('settings-palette-shortcut', settings.enabled);
-        showPaletteShortcutMessage(
-          settings.enabled
-            ? 'Press the shortcut from any app to open the palette. Disable here if it conflicts.'
-            : 'Palette shortcut disabled. Re-enable any time.',
-          false
-        );
-      } catch (e) {
-        console.error('Palette shortcut:', e);
-        showPaletteShortcutMessage(String(e || 'Could not register shortcut.'), true);
-      }
-    });
-    document.getElementById('settings-palette-shortcut-select').addEventListener('change', async (e) => {
-      const enabled = document.getElementById('settings-palette-shortcut').textContent === 'On';
-      if (!enabled) return;
-      try {
-        const settings = await invoke('cmd_set_palette_shortcut', {
-          enabled: true,
-          shortcut: e.target.value,
-        });
-        setSettingsToggle('settings-palette-shortcut', settings.enabled);
-        showPaletteShortcutMessage(
-          'Press the shortcut from any app to open the palette. Disable here if it conflicts.',
-          false
-        );
-      } catch (e2) {
-        console.error('Palette shortcut change:', e2);
-        showPaletteShortcutMessage(String(e2 || 'Could not register shortcut.'), true);
-      }
-    });
-    // Load initial palette shortcut state
-    invoke('cmd_palette_settings').then(settings => {
-      setSettingsToggle('settings-palette-shortcut', settings.enabled);
-      const select = document.getElementById('settings-palette-shortcut-select');
       if (select) select.value = settings.shortcut;
     }).catch(() => {});
 
@@ -6406,8 +6123,8 @@
     const recallEndBtn = document.getElementById('btn-recall-end');
     const assistantBtn = document.getElementById('btn-assistant');
 
-    const COLLAPSED_WIDTH = 520;
-    const EXPANDED_WIDTH = 1040;
+    const COLLAPSED_WIDTH = 480;
+    const EXPANDED_WIDTH = 960;
     const SESSION_ID = 'assistant';
 
     let recallExpanded = false;
@@ -6445,19 +6162,25 @@
 
       recallTerminal = new Terminal({
         theme: window.MINUTES_XTERM_THEME,
-        fontFamily: "'SF Mono', Menlo, monospace",
+        fontFamily: "'Geist Mono', 'SF Mono', Menlo, monospace",
         fontSize: 13,
         lineHeight: 1.2,
         cursorBlink: true,
         cursorStyle: 'bar',
         scrollback: 10000,
         allowProposedApi: true,
-        allowTransparency: true,
       });
+
+      const applyRecallTerminalTheme = (isDark) => {
+        recallTerminal.options.theme = window.getMinutesTheme(isDark);
+      };
 
       recallFitAddon = new FitAddon.FitAddon();
       recallTerminal.loadAddon(recallFitAddon);
       recallTerminal.open(recallTerminalContainer);
+      window.MINUTES_XTERM_THEME_QUERY.addEventListener('change', (event) => {
+        applyRecallTerminalTheme(event.matches);
+      });
 
       let fitTimeout;
       const resizeObserver = new ResizeObserver(() => {
@@ -6496,9 +6219,9 @@
           bytes[i] = raw.charCodeAt(i);
         }
         recallTerminal.write(bytes);
-        const wasHidden = recallTerminalContainer.style.display === 'none';
-        recallLoading.style.display = 'none';
-        recallTerminalContainer.style.display = '';
+        const wasHidden = recallTerminalContainer.classList.contains('hidden');
+        recallLoading.classList.remove('active');
+        recallTerminalContainer.classList.remove('hidden');
         // Re-fit after first reveal so xterm measures the real container width
         if (wasHidden && recallFitAddon) {
           requestAnimationFrame(() => recallFitAddon.fit());
@@ -6508,7 +6231,7 @@
       await currentWindow.listen('pty:exit:' + SESSION_ID, () => {
         recallPtyAlive = false;
         recallExitBanner.classList.add('active');
-        recallEndBtn.style.display = 'none';
+        recallEndBtn.classList.remove('active');
       });
     }
 
@@ -6592,8 +6315,8 @@
 
     // ── Open Recall (spawn PTY if needed, then expand) ──
     async function openRecall(mode, meetingPath) {
-      recallLoading.style.display = 'flex';
-      recallTerminalContainer.style.display = 'none';
+      recallLoading.classList.add('active');
+      recallTerminalContainer.classList.add('hidden');
       recallExitBanner.classList.remove('active');
 
       await expandRecallPanel();
@@ -6603,14 +6326,14 @@
         if (meetingPath) opts.meetingPath = meetingPath;
         await invoke('cmd_spawn_terminal', opts);
         recallPtyAlive = true;
-        recallEndBtn.style.display = '';
+        recallEndBtn.classList.add('active');
       } catch (e) {
         const msg = typeof e === 'string' ? e : String(e);
         if (msg.includes('already running') || msg.includes('Already')) {
           recallPtyAlive = true;
-          recallLoading.style.display = 'none';
-          recallTerminalContainer.style.display = '';
-          recallEndBtn.style.display = '';
+          recallLoading.classList.remove('active');
+          recallTerminalContainer.classList.remove('hidden');
+          recallEndBtn.classList.add('active');
           // Re-fit after reveal so xterm uses the full panel width
           if (recallFitAddon) {
             requestAnimationFrame(() => {
@@ -6651,19 +6374,6 @@
     const callHealthAudio = document.getElementById('call-health-audio');
     let activeCallSession = null;
 
-    function syncMeetingRecordButtons() {
-      const preferCallIntent =
-        activeCallSession &&
-        !activeCallSession.dismissed &&
-        callBanner.classList.contains('active');
-      document.getElementById('btn-record').textContent = preferCallIntent
-        ? 'Start Call Recording'
-        : 'Start Recording';
-      document.getElementById('btn-record-upcoming').textContent = preferCallIntent
-        ? 'Record Call'
-        : 'Record';
-    }
-
     function setCallHealthChip(node, text, live) {
       if (!node) return;
       node.textContent = text;
@@ -6682,12 +6392,17 @@
       setCallHealthChip(callHealthMic, 'Mic waiting', false);
       setCallHealthChip(callHealthAudio, 'Call audio waiting', false);
       callBanner.classList.add('active');
-      syncMeetingRecordButtons();
+
+      // Only steal focus on first detection, not periodic reminders
+      if (!is_reminder) {
+        currentWindow.show();
+        currentWindow.setFocus();
+      }
     });
 
     document.getElementById('btn-record-call').addEventListener('click', async () => {
       try {
-        await startMeetingRecording({ intent: 'call' });
+        await invoke('cmd_start_recording', { intent: 'call' });
       } catch (e) {
         console.error('Call recording:', e);
       }
@@ -6696,7 +6411,6 @@
     document.getElementById('btn-dismiss-call').addEventListener('click', () => {
       if (activeCallSession) activeCallSession.dismissed = true;
       callBanner.classList.remove('active');
-      syncMeetingRecordButtons();
     });
 
     currentWindow.listen('dictation-hotkey:status', (event) => {
@@ -6758,7 +6472,7 @@
     currentWindow.listen('live-transcript:started', () => {
       isLiveTranscript = true;
       liveBar.classList.add('active');
-      footer.style.display = 'none';
+      footer.classList.add('footer-hidden');
       statusPill.className = 'status-pill live';
       statusPill.textContent = 'live';
       startFastPoll();
@@ -6768,7 +6482,7 @@
     currentWindow.listen('live-transcript:stopped', (event) => {
       isLiveTranscript = false;
       liveBar.classList.remove('active');
-      footer.style.display = '';
+      footer.classList.remove('footer-hidden');
       statusPill.className = 'status-pill';
       statusPill.textContent = 'idle';
       stopFastPoll();
@@ -6779,7 +6493,7 @@
     currentWindow.listen('live-transcript:error', (event) => {
       isLiveTranscript = false;
       liveBar.classList.remove('active');
-      footer.style.display = '';
+      footer.classList.remove('footer-hidden');
       statusPill.className = 'status-pill';
       statusPill.textContent = 'idle';
       stopFastPoll();
@@ -6806,9 +6520,9 @@
         setRecallPhase('recall', context || null);
       }
       recallPtyAlive = true;
-      recallLoading.style.display = 'none';
-      recallTerminalContainer.style.display = '';
-      recallEndBtn.style.display = '';
+      recallLoading.classList.remove('active');
+      recallTerminalContainer.classList.remove('hidden');
+      recallEndBtn.classList.add('active');
     });
 
     // ── Restore window size when exiting fullscreen with recall panel open ──
@@ -6913,7 +6627,7 @@
     checkUpcoming = async function() {
       await originalCheckUpcoming();
       const upcomingEl = document.getElementById('upcoming');
-      if (upcomingEl && upcomingEl.style.display === 'flex' && !recallExpanded && !isRecording) {
+      if (upcomingEl && upcomingEl.classList.contains('active') && !recallExpanded && !isRecording) {
         const title = document.getElementById('upcoming-title').textContent;
         autoExpandRecall('prep', title);
       }

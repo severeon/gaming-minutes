@@ -254,15 +254,15 @@ The tag is immutable. The release notes are not. You can edit the body of an exi
 
 ## Plugin-only release path
 
-When the only changes are under `.claude/plugins/minutes/` (skills, scripts, hooks, agents, plugin manifests) and nothing in the Rust workspace, JS packages, Tauri app, or binary distribution is touched, the release flow is dramatically shorter than the binary flow above. No tag, no `gh release`, no `.mcpb` rebuild, no Homebrew tap bump.
+When the only changes are under `.claude/plugins/minutes/` (skills, scripts, hooks, agents, plugin manifests) and nothing in the Rust workspace, JS packages, Tauri app, or binary distribution is touched, the release flow is dramatically shorter than the binary flow above. No `v*` tag, no `.mcpb` rebuild, no Homebrew tap bump. The recommended path is still a GitHub Release with a `plugin-v*` tag (see P6 below) so users who watch the Releases tab discover the release the same way they discover binary releases.
 
-**Why it's different from binary releases:** the Claude Code plugin marketplace works by serving `main` of this repo directly to users who run `/plugin marketplace add silverstein/minutes`. There is no "release artifact" step — users pull whatever is in `main` whenever they explicitly ask Claude Code to refresh the marketplace mirror. Pushing to `main` **is** the release.
+**Why it's different from binary releases:** the Claude Code plugin marketplace works by serving `main` of this repo directly to users who run `/plugin marketplace add silverstein/minutes`. There is no "release artifact" step. Users pull whatever is in `main` whenever they explicitly ask Claude Code to refresh the marketplace mirror. Pushing to `main` **is** the release. The `plugin-v*` tag and GitHub Release exist for discoverability, not distribution.
 
 **But there's a catch, and it's the most important thing in this section:** each user's local marketplace mirror is a git clone at `~/.claude/plugins/marketplaces/<name>/` that **only updates when the user explicitly runs `/plugin marketplace update`**. It does not auto-pull. Claude Code's `/plugin update minutes@minutes` command consults that local mirror and trusts its `marketplace.json` → `plugins[0].version` as the source of truth for "what's the latest version". If the mirror is stale, `/plugin update` happily reports "already at latest" and does nothing, even though `main` has moved hundreds of commits ahead.
 
 This means two things, both critical:
 
-1. **Version bumps must happen in `marketplace.json`**, not just `plugin.json`. Bumping `plugin.json` alone does not change what Claude Code advertises as "latest" — Claude Code reads `marketplace.json` → `plugins[0].version`, full stop.
+1. **Version bumps must happen in `marketplace.json`**, not just `plugin.json`. Bumping `plugin.json` alone does not change what Claude Code advertises as "latest". Claude Code reads `marketplace.json` → `plugins[0].version`, full stop.
 
 2. **Every release note must include the two-command refresh sequence**, or existing users silently miss everything you ship. The sequence is:
 
@@ -302,11 +302,11 @@ All three must show the new version. `marketplace.json` in particular is the one
 
 **P3. Write release notes (5-section format, same policy as binary releases).** Create `notes-release-plugin-vX.Y.Z.md` at the repo root. Required sections:
 
-1. **What changed** — each new/modified skill, script, hook, with a sentence of "why"
-2. **Who should care** — who should upgrade vs who can skip
-3. **CLI / MCP / desktop impact** — state explicitly which of those surfaces are unchanged (most of the time all three are)
-4. **Breaking changes or migration notes** — frontmatter schema changes, removed skills, renamed commands
-5. **Known issues** — anything that's imperfect but not a blocker
+1. **What changed**: each new or modified skill, script, hook, with a sentence of "why"
+2. **Who should care**: who should upgrade vs who can skip
+3. **CLI / MCP / desktop impact**: state explicitly which of those surfaces are unchanged (most of the time all three are)
+4. **Breaking changes or migration notes**: frontmatter schema changes, removed skills, renamed commands
+5. **Known issues**: anything that's imperfect but not a blocker
 
 **Must include the upgrade incantation.** The release-note body must prominently feature the two-command refresh sequence with an explanation of why the single-command path fails. See `notes-release-plugin-v0.8.0.md` as the template.
 
@@ -339,30 +339,55 @@ assert os.path.isdir(src), f'source path missing: {src}'
 print(f'marketplace source → {src} OK')"
 ```
 
-**P5. Commit, push.** No `gh release create`, no tag — just push to `main`. Users pull when they run the two-command refresh.
+**P5. Commit, push.** Push to `main`. Users pull the new plugin state when they run the two-command marketplace refresh (see P6 / P7).
 
 ```bash
 git push origin main
 ```
 
-**P6. Post-push: announce the upgrade incantation.** This is the substitute for a GitHub Release announcement. Since there's no release page, post the release note contents (especially the upgrade incantation) wherever you announce to users: the repo README's "Recent releases" section if you have one, the useminutes.app site, a GitHub Discussion, a pinned issue, Slack, X, wherever your audience is. **Do not skip this step.** Without it, existing users stay on whatever version they installed originally — the update-check hook (v0.8.0+) will eventually notify them, but pre-v0.8.0 users never see the notice.
+**P6. Cut a GitHub Release with a `plugin-v*` tag and a linked Announcements discussion.** This is the formal discoverability surface for a plugin release. It does two things at once:
 
-**P7. Verify the mirror picks up the push.** On a clean test machine (or after clearing your own mirror):
+1. Creates a release page at `https://github.com/silverstein/minutes/releases/tag/plugin-vX.Y.Z` that matches the existing binary release cadence visually. Users who watch the Releases tab see plugin releases alongside binary releases and understand both are real releases.
+2. Creates a linked discussion in the **Announcements** category where users can comment, report upgrade problems, or celebrate.
 
+**Tag namespace matters.** Use `plugin-vX.Y.Z`, NOT `vX.Y.Z`. The three binary release workflows (`release-cli.yml`, `release-macos.yml`, `release-windows-desktop.yml`) listen on tags matching `v*` and will start building Rust CLI binaries, the macOS DMG, and the Windows NSIS installer against a main branch whose `Cargo.toml` hasn't been bumped. Best case the CI is weird. Worst case you ship half-broken artifacts under a tag you can't move (`RELEASE-CHANNELS.md`: no retags, ever). `plugin-vX.Y.Z` starts with `p`, not `v`, so none of those workflows trigger. **This was verified live during the v0.8.0 plugin release cut.**
+
+```bash
+gh release create plugin-vX.Y.Z \
+  --target main \
+  --title "Plugin vX.Y.Z: Short descriptive subtitle" \
+  --notes-file notes-release-plugin-vX.Y.Z.md \
+  --discussion-category "Announcements"
+```
+
+Do **not** pass `--prerelease` unless the release is actually experimental. Plugin releases cut from main are real, deployed, shipping releases. Marking them as prerelease in GitHub's UI discourages users from updating because "Pre-release" reads as "not ready for production" even when it is.
+
+**Do NOT skip the release.** Plugin releases that only live as a main-branch push are essentially invisible to anyone who isn't already running the v0.8.0+ update-check hook. The release page is where existing users go to learn "there's a new version and here's what I have to type to get it". Skipping P6 leaves pre-hook adopters silently stranded on whatever version they installed originally.
+
+**P7. Verify the mirror picks up the push AND the release + discussion landed cleanly.**
+
+Verify the mirror:
 ```bash
 /plugin marketplace update minutes
 cat ~/.claude/plugins/marketplaces/minutes/.claude-plugin/marketplace.json | grep version
 ```
 
-The version should match what you just pushed. If not, investigate — most likely a `marketplace.json` wasn't bumped, or the push didn't actually land on `main`.
+The version should match what you just pushed. If not, investigate. Most likely a `marketplace.json` wasn't bumped, or the push didn't actually land on `main`.
+
+Verify the release + discussion:
+```bash
+gh release view plugin-vX.Y.Z --repo silverstein/minutes
+gh run list --limit 5        # confirm no binary release workflows fired
+```
+
+The `gh run list` check is the belt-and-braces verification that the tag namespace worked. If you see `Release CLI Binaries` or `Release macOS` queued or running against the plugin tag, stop them immediately and investigate, because they're attempting to build binary artifacts from an unbumped Cargo.toml.
 
 ### What's explicitly NOT required for a plugin-only release
 
 - No Rust cargo fmt/clippy/test (nothing touches Rust)
 - No npm build of `crates/sdk` or `crates/mcp`
 - No `npm publish` of any package
-- No tag (`vX.Y.Z`)
-- No `gh release create`
+- No `v*` tag (those trigger the binary release workflows; use `plugin-v*` instead)
 - No `.mcpb` rebuild or upload
 - No Homebrew tap bump
 - No macOS DMG / Windows NSIS build

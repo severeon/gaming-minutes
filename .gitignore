@@ -45,6 +45,7 @@ models/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+/.beads/.beads-credential-key
 Minutes.app
 minutes.mcpb
 .gstack/

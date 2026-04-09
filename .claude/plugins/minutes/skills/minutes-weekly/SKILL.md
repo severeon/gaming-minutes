@@ -160,6 +160,42 @@ This catches meetings that happened but weren't recorded, or recordings that wer
 
 Produce a "what deserves your attention Monday" section:
 
+Before deciding how to order the weekly output, check:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/hooks/lib/minutes-learn-cli.mjs" get-presentation-focus weekly
+```
+
+If the result is:
+- `decisions-first` → lead with Decision Arcs and unresolved conflicts before commitments
+- `commitments-first` → lead with Action Item Audit / stale commitments before decision arcs
+- `memo-heavy` → surface voice memos and idea capture much more prominently in the synthesis
+
+Use this concrete ordering:
+
+- `decisions-first`
+  1. Decision Arcs
+  2. This Week's Themes
+  3. Action Item Audit / stale commitments
+  4. Relationship Pulse
+  5. Attention Monday
+
+- `commitments-first`
+  1. Action Item Audit / stale commitments
+  2. Decision Arcs
+  3. This Week's Themes
+  4. Relationship Pulse
+  5. Attention Monday
+
+- `memo-heavy`
+  1. This Week's Themes, but ensure voice memos and idea capture are surfaced explicitly inside the theme summary
+  2. Action Item Audit
+  3. Decision Arcs
+  4. Relationship Pulse
+  5. Attention Monday
+
+If there is no preference, keep the default order in this skill.
+
 ```
 ## Attention Monday
 
@@ -189,6 +225,12 @@ End with three beats:
 
 ## Gotchas
 
+- **Record explicit weekly presentation preferences when the user states them.** If the user says "always show commitments first", "start with decisions", or "surface voice memos more", persist it:
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/hooks/lib/minutes-learn-cli.mjs" set-presentation-focus weekly commitments-first "User explicitly prefers commitments first in weekly synthesis"
+  node "${CLAUDE_PLUGIN_ROOT}/hooks/lib/minutes-learn-cli.mjs" set-presentation-focus weekly decisions-first "User explicitly prefers decisions first in weekly synthesis"
+  node "${CLAUDE_PLUGIN_ROOT}/hooks/lib/minutes-learn-cli.mjs" set-presentation-focus weekly memo-heavy "User explicitly wants stronger voice-memo emphasis"
+  ```
 - **Zero recordings is not an error** — Say "nothing this week" clearly. Don't hallucinate a summary. Offer to extend the range.
 - **Light weeks (1-2 recordings) are still worth summarizing** — A single meeting can have important decisions. Don't dismiss it.
 - **Don't be a nag about overdue items** — Surface them factually. "This is overdue since Friday" not "You really need to get on this."

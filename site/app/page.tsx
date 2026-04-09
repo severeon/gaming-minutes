@@ -1,5 +1,5 @@
 import { CopyButton } from "@/components/copy-button";
-import { APPLE_SILICON_DMG } from "@/lib/release";
+import { APPLE_SILICON_DMG, WINDOWS_SETUP_EXE } from "@/lib/release";
 
 const featureGrid = [
   {
@@ -313,7 +313,7 @@ export default function Home() {
             Mac (Apple Silicon)
           </a>
           <a
-            href="https://github.com/silverstein/minutes/releases/latest/download/minutes-desktop-windows-x64-setup.exe"
+            href={WINDOWS_SETUP_EXE}
             className="inline-flex items-center gap-2 rounded-[5px] border border-[color:var(--border)] bg-[var(--bg-elevated)] px-5 py-2.5 font-mono text-[11px] uppercase tracking-[0.1em] text-[var(--text)] shadow-[var(--shadow-panel)] hover:border-[color:var(--border-mid)] hover:bg-[var(--bg-hover)]"
           >
             <svg

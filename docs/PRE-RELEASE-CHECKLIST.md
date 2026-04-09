@@ -171,7 +171,9 @@ The landing page imports a site-local generated DMG download constant:
 site/lib/release.ts
 ```
 
-The `releases/latest` redirect IS correct, but the filename includes the version. Refresh the generated file from `manifest.json` before shipping:
+Do not use `releases/latest/download` for desktop assets in this repo. Plugin-only releases can become GitHub's `Latest` release and hijack those URLs away from the latest binary tag. Use explicit `releases/download/vX.Y.Z/...` asset URLs generated from `manifest.json` instead.
+
+Refresh the generated site release constants from `manifest.json` before shipping:
 
 ```bash
 node scripts/sync_site_release_version.mjs

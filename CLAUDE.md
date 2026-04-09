@@ -227,7 +227,7 @@ Do not deviate without explicit user approval.
 Key rules:
 - Landing site defaults to **light cream** (#F8F4ED). Dark mode is opt-in via system preference.
 - Accent: **coral** (#C96B4E) in light, **green** (#30D158) in dark. Used sparingly — 5 specific spots only.
-- Headings: **Instrument Serif**. Body: **Geist**. UI/labels/transcript: **Geist Mono**.
+- Headings: **Instrument Serif**. Body: **Instrument Sans**. UI/labels/transcript: **Geist Mono**.
 - No gradients, no decorative elements, no illustrations. Information density is the aesthetic.
 - The transcript output card (diarized speaker labels + action items in Geist Mono) is the primary product demo.
 - In QA or design review: flag any code that introduces fonts, colors, or radius values not defined in DESIGN.md.

@@ -1,28 +1,34 @@
 #!/usr/bin/env node
 
 /**
- * SessionStart hook: proactive meeting reminder.
+ * SessionStart hook: proactive meeting reminder + plugin update check.
  *
  * When a Claude Code session starts, check if the user has a meeting
  * in the next 60 minutes. If so, nudge them to run /minutes-brief
  * (or /minutes-prep if they want to think harder about goals first).
  *
- * Also surfaces voice memos from the last 3 days and relationship-graph
- * intelligence (losing-touch alerts, stale commitments) so the agent
- * walks into the session already aware.
+ * Also surfaces voice memos from the last 3 days, relationship-graph
+ * intelligence (losing-touch alerts, stale commitments), and a
+ * once-per-day check for newer plugin versions on GitHub — so the
+ * agent walks into the session already aware.
  *
  * Guards against being annoying:
  * - Only fires on startup (not resume/compact/clear)
  * - Only fires if the user has actively used a Minutes skill before
  *   (~/.minutes/preps/ OR ~/.minutes/briefs/ exists)
  * - Only fires during business hours (8am-6pm, weekdays)
- * - Can be disabled via ~/.config/minutes/config.toml: [reminders] enabled = false
+ * - Can be disabled via ~/.config/minutes/config.toml:
+ *     [reminders]
+ *     enabled = false
+ *   And the update check separately:
+ *     [updates]
+ *     check = false
  *
  * Hook event: SessionStart
  * Matcher: startup
  */
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -156,6 +162,197 @@ try {
   // Non-fatal — relationship graph not available or not yet built
 }
 
+// ─── Plugin update check ──────────────────────────────────────────────
+// Adapted from garrytan/gstack's bin/gstack-update-check pattern. Fetches
+// the canonical plugin.json from raw.githubusercontent.com once per cache
+// window, compares to the locally-installed version, and injects an update
+// notice into additionalContext when a newer version exists. Respects
+// per-version escalating-backoff snooze state so users who say "not now"
+// don't get spammed, and a separate opt-out config so users who never
+// want the check can turn it off entirely.
+//
+// Cache TTLs (match gstack's original tuning):
+//   UP_TO_DATE:        60 min  — detect new releases quickly
+//   UPGRADE_AVAILABLE: 12 hrs  — keep the nag visible but not every session
+//
+// Snooze levels (same escalation ladder as gstack):
+//   level 1: 24 hrs, level 2: 48 hrs, level 3+: 7 days
+//   A new remote version resets the snooze so users get re-notified
+//   immediately when a newer release drops.
+//
+// Opt-out: ~/.config/minutes/config.toml
+//   [updates]
+//   check = false
+//
+// All failures here are silent. Network errors, GitHub blips, curl missing,
+// corrupt cache, malformed remote response — none of them may block the
+// session-reminder hook from firing the rest of its work.
+let updateContext = "";
+try {
+  // Respect [updates] check = false opt-out. Uses the same scoped-regex
+  // pattern as the [reminders] opt-out above so `[audio] enabled = false`
+  // can't false-positive into silencing this check either.
+  let updateCheckDisabled = false;
+  if (existsSync(configPath)) {
+    try {
+      const cfg = readFileSync(configPath, "utf-8");
+      if (/\[updates\][^\[]*\bcheck\s*=\s*false\b/.test(cfg)) {
+        updateCheckDisabled = true;
+      }
+    } catch {
+      // Config unreadable — fall through (check remains enabled)
+    }
+  }
+
+  if (!updateCheckDisabled) {
+    const stateDir = join(homedir(), ".minutes");
+    const cacheFile = join(stateDir, "update-check-cache");
+    const snoozeFile = join(stateDir, "update-snoozed");
+    const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || "";
+    const localPluginJson = join(pluginRoot, ".claude-plugin", "plugin.json");
+
+    // Read local version from the canonical metadata file
+    let localVersion = "";
+    try {
+      const parsed = JSON.parse(readFileSync(localPluginJson, "utf-8"));
+      if (typeof parsed.version === "string") {
+        localVersion = parsed.version;
+      }
+    } catch {
+      // No local plugin.json or unparseable — skip entirely. The hook may
+      // be running outside the plugin environment (e.g., during testing).
+    }
+
+    // Semver validation: reject HTML error pages, reject garbage. Accepts
+    // N.N.N with optional pre-release suffix (e.g. 0.8.0-rc.1).
+    const looksLikeVersion = (v) => /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(v);
+
+    // Semver compare — returns true if `b` is strictly newer than `a`.
+    // Pre-release suffixes are ignored for the comparison; any pre-release
+    // version is treated as lower-precedence than a final at the same core
+    // version, which matches semver spec closely enough for our use.
+    const isNewer = (a, b) => {
+      const core = (v) => v.split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
+      const pa = core(a);
+      const pb = core(b);
+      const len = Math.max(pa.length, pb.length);
+      for (let i = 0; i < len; i++) {
+        const da = pa[i] || 0;
+        const db = pb[i] || 0;
+        if (db > da) return true;
+        if (db < da) return false;
+      }
+      // Core versions equal — treat pre-release as lower precedence
+      const aPre = a.includes("-");
+      const bPre = b.includes("-");
+      if (aPre && !bPre) return true;
+      return false;
+    };
+
+    // Check snooze state for a given remote version. Returns true if the
+    // update is currently snoozed and we should stay quiet.
+    const isSnoozed = (remoteVer) => {
+      try {
+        if (!existsSync(snoozeFile)) return false;
+        const raw = readFileSync(snoozeFile, "utf-8").trim();
+        const [snoozedVer, levelStr, epochStr] = raw.split(/\s+/);
+        if (!snoozedVer || !levelStr || !epochStr) return false;
+        const level = parseInt(levelStr, 10);
+        const epoch = parseInt(epochStr, 10);
+        if (!Number.isFinite(level) || !Number.isFinite(epoch)) return false;
+        // New version? Ignore the snooze — user should be re-prompted.
+        if (snoozedVer !== remoteVer) return false;
+        const duration = level <= 1 ? 86400 : level === 2 ? 172800 : 604800;
+        return Date.now() / 1000 < epoch + duration;
+      } catch {
+        return false;
+      }
+    };
+
+    if (localVersion && looksLikeVersion(localVersion)) {
+      let remoteVersion = "";
+
+      // Step 1: Try the cache first. Cache is only valid for the CURRENT
+      // local version — if the user just manually ran /plugin update and
+      // the local bumped, the cache is stale and we re-fetch.
+      let useCache = false;
+      if (existsSync(cacheFile)) {
+        try {
+          const raw = readFileSync(cacheFile, "utf-8").trim();
+          const parts = raw.split(/\s+/);
+          const state = parts[0];
+          const ageMs = Date.now() - statSync(cacheFile).mtimeMs;
+          const ttlMs =
+            state === "UP_TO_DATE"
+              ? 60 * 60 * 1000
+              : state === "UPGRADE_AVAILABLE"
+              ? 12 * 60 * 60 * 1000
+              : 0;
+          if (ttlMs > 0 && ageMs < ttlMs && parts[1] === localVersion) {
+            useCache = true;
+            if (state === "UPGRADE_AVAILABLE") {
+              remoteVersion = parts[2] || "";
+            }
+          }
+        } catch {
+          // Corrupt cache — fall through to re-fetch
+        }
+      }
+
+      // Step 2: Slow path — fetch the remote plugin.json. Only runs when
+      // the cache is stale or missing. 3-second timeout keeps the hook
+      // responsive even if GitHub is slow or the user is offline.
+      if (!useCache) {
+        try {
+          const { execFileSync } = await import("child_process");
+          const remoteUrl =
+            "https://raw.githubusercontent.com/silverstein/minutes/main/.claude/plugins/minutes/.claude-plugin/plugin.json";
+          const raw = execFileSync(
+            "curl",
+            ["-sf", "--max-time", "3", remoteUrl],
+            {
+              encoding: "utf-8",
+              stdio: ["ignore", "pipe", "ignore"],
+              timeout: 4000,
+            }
+          );
+          const parsed = JSON.parse(raw);
+          const ver = typeof parsed.version === "string" ? parsed.version : "";
+          if (looksLikeVersion(ver)) {
+            const state = isNewer(localVersion, ver)
+              ? `UPGRADE_AVAILABLE ${localVersion} ${ver}`
+              : `UP_TO_DATE ${localVersion}`;
+            mkdirSync(stateDir, { recursive: true });
+            writeFileSync(cacheFile, state);
+            if (isNewer(localVersion, ver)) {
+              remoteVersion = ver;
+            }
+          }
+        } catch {
+          // Network error, parse error, curl missing, timeout — silent fallback.
+        }
+      }
+
+      // Step 3: Inject a notice if a newer version is available and not snoozed.
+      // The instruction block tells Claude how to respond to user actions
+      // (snooze / disable) by writing the appropriate state files, since
+      // the hook itself can't run AskUserQuestion.
+      if (remoteVersion && isNewer(localVersion, remoteVersion) && !isSnoozed(remoteVersion)) {
+        updateContext = `\n\nMinutes plugin update available: v${remoteVersion} (user is on v${localVersion}). Mention it ONCE in ONE line early in the response — do not harp on it. Tell them: run \`/plugin update minutes\` to get the latest skills and bug fixes.
+
+If the user says "snooze", "not now", "remind me later", or similar: read ~/.minutes/update-snoozed if it exists (format: "<version> <level> <epoch>"), increment level (cap at 3), and write "${remoteVersion} <new_level> $(date +%s)" back. Levels: 1=24h, 2=48h, 3+=7d quiet.
+
+If the user says "never ask again", "stop reminding me", or "disable updates": append "[updates]\\ncheck = false\\n" to ~/.config/minutes/config.toml (create the file if missing). Tell them they can re-enable by removing that block.
+
+If the user ignores the update mention and stays on task, do not bring it up again this session.`;
+      }
+    }
+  }
+} catch {
+  // Top-level catch — any unhandled error in the update check path must
+  // not block the session-reminder hook from firing the rest of its work.
+}
+
 // Calendar context: three-way decision tree.
 //   (1) Try osascript (Apple Calendar) locally — the precise path. If we can
 //       verify there's a meeting in the next 60 min, inject a specific
@@ -213,7 +410,7 @@ if (!localCheckResolved) {
 }
 
 const output = {
-  additionalContext: `Active Minutes user.${calendarContext}${memoContext}${relationshipContext}`,
+  additionalContext: `Active Minutes user.${calendarContext}${memoContext}${relationshipContext}${updateContext}`,
 };
 
 console.log(JSON.stringify(output));

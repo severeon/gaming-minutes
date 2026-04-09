@@ -619,11 +619,36 @@ async function main() {
   const resources = parseResources(mcpSource);
   const errorEntries = (await parseErrorCatalog()).map(classifyErrorEntry);
 
+  if (manifest.tools.length === 0) {
+    throw new Error("manifest.json contains no tools");
+  }
   if (resources.length === 0) {
     throw new Error("Failed to extract MCP resources from crates/mcp/src/index.ts");
   }
   if (errorEntries.length === 0) {
     throw new Error("Failed to extract error definitions from crates/core");
+  }
+
+  const uncategorizedTools = manifest.tools.filter((t) => categorizeTool(t.name) === "Other");
+  if (uncategorizedTools.length > 0) {
+    throw new Error(
+      `Uncategorized tools: ${uncategorizedTools.map((t) => t.name).join(", ")}. ` +
+      `Update categorizeTool() in generate_llms_txt.mjs.`
+    );
+  }
+  const uncategorizedResources = resources.filter((r) => categorizeResource(r.name) === "Other");
+  if (uncategorizedResources.length > 0) {
+    throw new Error(
+      `Uncategorized resources: ${uncategorizedResources.map((r) => r.name).join(", ")}. ` +
+      `Update categorizeResource() in generate_llms_txt.mjs.`
+    );
+  }
+  const uncategorizedPrompts = manifest.prompts.filter((p) => categorizePrompt(p.name) === "Other");
+  if (uncategorizedPrompts.length > 0) {
+    throw new Error(
+      `Uncategorized prompts: ${uncategorizedPrompts.map((p) => p.name).join(", ")}. ` +
+      `Update categorizePrompt() in generate_llms_txt.mjs.`
+    );
   }
 
   const next = buildLlmsTxt({ manifest, resources });

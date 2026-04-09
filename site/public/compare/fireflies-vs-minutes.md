@@ -1,10 +1,10 @@
-# Minutes vs Fireflies
+# Minutes vs Fireflies.ai
 
 Last reviewed: 2026-04-09
 
 ## Quick verdict
 
-- Choose **Fireflies** if you want a hosted meeting assistant with stronger integrations, team workflows, admin controls, and a SaaS collaboration story.
+- Choose **Fireflies.ai** if you want a hosted meeting assistant with stronger integrations, team workflows, admin controls, and a SaaS collaboration story.
 - Choose **Minutes** if you want local processing, open output, and a memory layer that Claude, Codex, and other MCP clients can query across files and tools.
 
 ## Where Fireflies wins

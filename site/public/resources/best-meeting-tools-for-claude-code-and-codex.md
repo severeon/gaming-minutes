@@ -8,7 +8,7 @@ This page is about tools that make meetings useful inside agent workflows, not j
 
 - Best for local-first agent memory: **Minutes**
 - Best for polished AI notepad experience: **Granola AI**
-- Best for hosted team meeting workflows: **Fireflies**
+- Best for hosted team meeting workflows: **Fireflies.ai**
 - Best for hosted mainstream meeting assistant workflows: **Otter AI**
 
 ## Evaluation criteria

@@ -1,14 +1,12 @@
 # Compare Minutes
 
-These comparison pages are fit-based, not teardown posts.
-
-The goal is to help the right user choose the right product and make the Minutes wedge clear without pretending every tool should do the same job.
+These are buying guides, not teardown posts. The point is simple: some people should pick Minutes, and some should not. We want that to be obvious as quickly as possible.
 
 ## Pages
 
 - [Minutes vs Granola AI](/compare/granola-vs-minutes)
 - [Minutes vs Otter AI](/compare/otter-vs-minutes)
-- [Minutes vs Fireflies](/compare/fireflies-vs-minutes)
+- [Minutes vs Fireflies.ai](/compare/fireflies-vs-minutes)
 
 ## Notes
 

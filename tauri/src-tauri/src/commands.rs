@@ -169,6 +169,15 @@ pub struct TextFileAccess {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextFileReview {
+    pub available: bool,
+    pub snapshot_label: Option<String>,
+    pub before_preview: Option<String>,
+    pub current_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OutputNotice {
     pub kind: String,
     pub title: String,
@@ -1465,6 +1474,17 @@ fn matching_snapshots(
         .collect::<Vec<_>>();
     matching.sort();
     Ok(matching)
+}
+
+fn preview_text_for_review(text: &str, max_lines: usize, max_chars: usize) -> String {
+    let mut joined = text.lines().take(max_lines).collect::<Vec<_>>().join("\n");
+    if joined.chars().count() > max_chars {
+        joined = joined.chars().take(max_chars).collect::<String>();
+        joined.push_str("\n…");
+    } else if text.lines().count() > max_lines {
+        joined.push_str("\n…");
+    }
+    joined
 }
 
 fn write_text_file_atomic(path: &Path, content: &str) -> Result<(), String> {
@@ -3063,6 +3083,33 @@ pub fn cmd_get_text_file_access(path: String) -> Result<TextFileAccess, String> 
     Ok(TextFileAccess {
         path: canonical.display().to_string(),
         editable: is_editable_text_file_path(&canonical, &config),
+    })
+}
+
+#[tauri::command]
+pub fn cmd_get_text_file_review(path: String) -> Result<TextFileReview, String> {
+    let canonical = validate_text_file_path(Path::new(&path))?;
+    let Some(snapshot) = latest_snapshot_for_path(&canonical)? else {
+        return Ok(TextFileReview {
+            available: false,
+            snapshot_label: None,
+            before_preview: None,
+            current_preview: None,
+        });
+    };
+    let before = std::fs::read_to_string(&snapshot)
+        .map_err(|e| format!("Cannot read snapshot {}: {}", snapshot.display(), e))?;
+    let current = std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("Cannot read {}: {}", canonical.display(), e))?;
+    let snapshot_label = snapshot
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string());
+    Ok(TextFileReview {
+        available: true,
+        snapshot_label,
+        before_preview: Some(preview_text_for_review(&before, 80, 4000)),
+        current_preview: Some(preview_text_for_review(&current, 80, 4000)),
     })
 }
 

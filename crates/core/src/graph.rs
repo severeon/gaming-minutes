@@ -270,9 +270,9 @@ pub fn rebuild_index_at(config: &Config, path: &Path) -> Result<GraphStats, Grap
         let mut file_people: Vec<(String, String, Vec<String>, &str)> = Vec::new(); // (slug, name, aliases, role)
 
         // Source 1: frontmatter.attendees
-        for attendee in &frontmatter.attendees {
-            let slug = slugify(attendee);
-            file_people.push((slug, attendee.clone(), vec![], "attendee"));
+        for attendee in frontmatter.normalized_attendees() {
+            let slug = slugify(&attendee);
+            file_people.push((slug, attendee, vec![], "attendee"));
         }
 
         // Source 2: frontmatter.people
@@ -1332,6 +1332,42 @@ Skip the wizard. Drop users into a pre-populated demo workspace.
             .unwrap();
         assert_eq!(top.0, "Sarah Chen");
         assert_eq!(top.1, 2);
+    }
+
+    #[test]
+    fn test_relationship_map_includes_attendees_raw_imports() {
+        let tmp = TempDir::new().unwrap();
+        let meetings = tmp.path().join("meetings");
+        fs::create_dir_all(&meetings).unwrap();
+        let meeting = r#"---
+title: Imported Granola Meeting
+type: meeting
+date: 2026-03-24T09:00:00-07:00
+duration: 25m
+source: granola-import
+attendees_raw: Alice Smith (alice@example.com), Bob Brown (bob@example.com)
+---
+
+## Notes
+
+Imported notes only.
+"#;
+        write_meeting(&meetings, "granola.md", meeting);
+
+        let config = test_config(&meetings);
+        let db = tmp.path().join("graph.db");
+        rebuild_index_at(&config, &db).unwrap();
+
+        let conn = open_db(&db).unwrap();
+        let names: Vec<String> = conn
+            .prepare("SELECT name FROM people ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .filter_map(|row| row.ok())
+            .collect();
+        assert!(names.contains(&"Alice Smith".to_string()));
+        assert!(names.contains(&"Bob Brown".to_string()));
     }
 
     #[test]

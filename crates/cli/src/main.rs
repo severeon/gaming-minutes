@@ -3558,6 +3558,7 @@ fn import_granola(dir: Option<&Path>, dry_run: bool, config: &Config) -> Result<
             .find(|l| l.starts_with("Attendees:"))
             .map(|l| l.trim_start_matches("Attendees:").trim().to_string())
             .unwrap_or_default();
+        let attendees = minutes_core::markdown::parse_attendees_raw(&attendees_line);
 
         // Extract notes and transcript sections
         let notes_section = extract_section(&content, "## Your Notes");
@@ -3597,8 +3598,17 @@ fn import_granola(dir: Option<&Path>, dry_run: bool, config: &Config) -> Result<
         output.push_str("type: meeting\n");
         output.push_str(&format!("date: {}\n", date));
         output.push_str("source: granola-import\n");
+        if !attendees.is_empty() {
+            output.push_str("attendees:\n");
+            for attendee in &attendees {
+                output.push_str(&format!("  - {}\n", serde_json::to_string(attendee)?));
+            }
+        }
         if !attendees_line.is_empty() && attendees_line != "None" {
-            output.push_str(&format!("attendees_raw: {}\n", attendees_line));
+            output.push_str(&format!(
+                "attendees_raw: {}\n",
+                serde_json::to_string(&attendees_line)?
+            ));
         }
         output.push_str("---\n\n");
 

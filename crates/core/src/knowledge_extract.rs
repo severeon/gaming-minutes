@@ -62,8 +62,8 @@ pub fn extract_from_frontmatter(fm: &Frontmatter, meeting_path: &str) -> Vec<Per
     for decision in &fm.decisions {
         // Decisions are attributed to the meeting, not a specific person.
         // We file them under each attendee present.
-        for attendee in &fm.attendees {
-            let Some(identity) = resolve_person_identity(attendee, &canonical_people) else {
+        for attendee in fm.normalized_attendees() {
+            let Some(identity) = resolve_person_identity(&attendee, &canonical_people) else {
                 continue;
             };
             let entry = person_map
@@ -286,6 +286,7 @@ mod tests {
             status: None,
             tags: vec![],
             attendees: vec!["Mat".into(), "Dan".into()],
+            attendees_raw: None,
             calendar_event: None,
             people: vec![],
             entities: EntityLinks {

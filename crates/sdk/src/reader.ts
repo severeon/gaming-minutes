@@ -57,6 +57,7 @@ export interface Frontmatter {
   captured_at?: string;
   tags: string[];
   attendees: string[];
+  attendees_raw?: string;
   people: string[];
   context?: string;
   calendar_event?: string;
@@ -70,6 +71,26 @@ export interface MeetingFile {
   frontmatter: Frontmatter;
   body: string;
   path: string;
+}
+
+function parseRawAttendees(raw?: string): string[] {
+  if (!raw) return [];
+
+  const attendees: string[] = [];
+  for (const token of raw.split(",")) {
+    const trimmed = token.trim();
+    if (!trimmed || trimmed.toLowerCase() === "none") continue;
+
+    const parenMatch = trimmed.match(/^(.*?)\s*\([^)]*\)$/);
+    const angleMatch = trimmed.match(/^(.*?)\s*<[^>]*>$/);
+    const value = (parenMatch?.[1] || angleMatch?.[1] || trimmed).trim();
+    if (!value) continue;
+    if (!attendees.some((existing) => existing.toLowerCase() === value.toLowerCase())) {
+      attendees.push(value);
+    }
+  }
+
+  return attendees;
 }
 
 // ── Parsing ──────────────────────────────────────────────────
@@ -124,6 +145,7 @@ export function parseFrontmatter(
       attendees: Array.isArray(parsed.attendees)
         ? parsed.attendees.map(String)
         : [],
+      attendees_raw: parsed.attendees_raw ? String(parsed.attendees_raw) : undefined,
       people: Array.isArray(parsed.people) ? parsed.people.map(String) : [],
       context: parsed.context ? String(parsed.context) : undefined,
       calendar_event: parsed.calendar_event
@@ -329,7 +351,12 @@ export async function getPersonProfile(
     const meeting = await readMeetingFile(file);
     if (!meeting) continue;
 
-    const inAttendees = meeting.frontmatter.attendees.some((a) =>
+    const attendees = [
+      ...meeting.frontmatter.attendees,
+      ...parseRawAttendees(meeting.frontmatter.attendees_raw),
+    ];
+
+    const inAttendees = attendees.some((a) =>
       a.toLowerCase().includes(nameLower)
     );
     const inPeople = meeting.frontmatter.people.some((p) =>

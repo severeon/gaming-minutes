@@ -38,6 +38,8 @@ pub struct Frontmatter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attendees: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub attendees_raw: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub calendar_event: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub people: Vec<String>,

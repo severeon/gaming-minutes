@@ -274,6 +274,7 @@ mod tests {
             status: None,
             tags: vec![],
             attendees: vec![],
+            attendees_raw: None,
             calendar_event: None,
             people: vec![],
             entities: Default::default(),

@@ -770,6 +770,7 @@ mod tests {
                 status: Some(OutputStatus::NoSpeech),
                 tags: vec![],
                 attendees: vec![],
+                attendees_raw: None,
                 calendar_event: None,
                 people: vec![],
                 entities: crate::markdown::EntityLinks::default(),

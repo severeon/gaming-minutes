@@ -48,6 +48,8 @@ pub struct Frontmatter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attendees: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub attendees_raw: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub calendar_event: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub people: Vec<String>,
@@ -75,6 +77,67 @@ pub struct Frontmatter {
     /// Not serialized to YAML — only used for the NoSpeech hint in rendered markdown.
     #[serde(skip)]
     pub filter_diagnosis: Option<String>,
+}
+
+impl Frontmatter {
+    /// Return structured attendees plus any names parsed from legacy raw imports.
+    pub fn normalized_attendees(&self) -> Vec<String> {
+        let mut attendees = self.attendees.clone();
+        if let Some(raw) = &self.attendees_raw {
+            for attendee in parse_attendees_raw(raw) {
+                if !attendees
+                    .iter()
+                    .any(|existing| attendee_key(existing) == attendee_key(&attendee))
+                {
+                    attendees.push(attendee);
+                }
+            }
+        }
+        attendees
+    }
+}
+
+fn attendee_key(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+/// Parse legacy Granola-style attendee strings like
+/// `Alice Smith (alice@example.com), bob@example.com`.
+pub fn parse_attendees_raw(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .filter_map(|token| {
+            let trimmed = token.trim();
+            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+                return None;
+            }
+
+            if let Some(name) = trimmed
+                .strip_suffix(')')
+                .and_then(|value| value.rsplit_once('(').map(|(name, _)| name.trim()))
+                .filter(|name| !name.is_empty())
+            {
+                return Some(name.to_string());
+            }
+
+            if let Some(name) = trimmed
+                .strip_suffix('>')
+                .and_then(|value| value.rsplit_once('<').map(|(name, _)| name.trim()))
+                .filter(|name| !name.is_empty())
+            {
+                return Some(name.to_string());
+            }
+
+            Some(trimmed.to_string())
+        })
+        .fold(Vec::new(), |mut acc, attendee| {
+            if !acc
+                .iter()
+                .any(|existing| attendee_key(existing) == attendee_key(&attendee))
+            {
+                acc.push(attendee);
+            }
+            acc
+        })
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -700,6 +763,7 @@ mod tests {
             status: Some(OutputStatus::Complete),
             tags: vec![],
             attendees: vec![],
+            attendees_raw: None,
             calendar_event: None,
             people: vec![],
             entities: EntityLinks::default(),
@@ -907,6 +971,35 @@ mod tests {
         assert!(content.contains("kind: commitment"));
         assert!(content.contains("who: sarah"));
         assert!(content.contains("by_date: Tuesday"));
+    }
+
+    #[test]
+    fn parses_attendees_raw_names_and_fallbacks() {
+        let attendees = parse_attendees_raw(
+            "Alice Smith (alice@example.com), bob@example.com, Carol Jones <carol@example.com>, Alice Smith (alice@example.com)",
+        );
+
+        assert_eq!(
+            attendees,
+            vec![
+                "Alice Smith".to_string(),
+                "bob@example.com".to_string(),
+                "Carol Jones".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn normalized_attendees_merges_structured_and_raw_values() {
+        let mut fm = test_frontmatter();
+        fm.attendees = vec!["Alice Smith".into()];
+        fm.attendees_raw =
+            Some("Alice Smith (alice@example.com), Bob Brown (bob@example.com)".into());
+
+        assert_eq!(
+            fm.normalized_attendees(),
+            vec!["Alice Smith".to_string(), "Bob Brown".to_string()]
+        );
     }
 
     #[test]

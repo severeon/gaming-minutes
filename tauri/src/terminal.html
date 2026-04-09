@@ -6,20 +6,62 @@
   <title>Minutes Terminal</title>
   <link rel="stylesheet" href="vendor/xterm/xterm.css">
   <style>
+    @font-face {
+      font-family: 'Geist';
+      font-style: normal;
+      font-weight: 400;
+      src: url('fonts/Geist-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Geist';
+      font-style: normal;
+      font-weight: 500;
+      src: url('fonts/Geist-Medium.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Geist Mono';
+      font-style: normal;
+      font-weight: 400;
+      src: url('fonts/GeistMono-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Geist Mono';
+      font-style: normal;
+      font-weight: 500;
+      src: url('fonts/GeistMono-Medium.woff2') format('woff2');
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
-      --bg: #1c1c1e;
-      --bg-elevated: #2c2c2e;
-      --border: #38383a;
-      --text: #f5f5f7;
-      --text-secondary: #98989d;
-      --text-tertiary: #636366;
-      --accent: #6391b3;
-      --red: #e5534b;
-      --green: #46c072;
-      --font-mono: 'SF Mono', 'Menlo', monospace;
-      --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+      color-scheme: light dark;
+      --bg:          #0D0D0B;
+      --bg-elevated: #141412;
+      --bg-hover:    #1C1C1A;
+      --border:      #2A2924;
+      --text:        #E8E4DA;
+      --text-secondary: #6B6760;
+      --text-tertiary:  #3D3B38;
+      --accent:      #30D158;
+      --red:         #FF453A;
+      --green:       #30D158;
+      --font-mono:   'Geist Mono', 'SF Mono', 'Menlo', monospace;
+      --font-sans:   'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg:             #F8F4ED;
+        --bg-elevated:    #EFEBE2;
+        --bg-hover:       #E8E2D8;
+        --border:         rgba(0,0,0,0.13);
+        --text:           #1A1916;
+        --text-secondary: #8C8880;
+        --text-tertiary:  #BDB9B0;
+        --accent:         #C96B4E;
+        --red:            #C0392B;
+        --green:          #2E7D46;
+      }
     }
 
     body {
@@ -87,7 +129,7 @@
       cursor: pointer;
     }
 
-    .btn:hover { background: #38383a; }
+    .btn:hover { background: var(--bg-hover); }
 
     #terminal-container {
       flex: 1;
@@ -114,7 +156,7 @@
 
     /* Override xterm background to match app */
     .xterm { height: 100%; }
-    .xterm-viewport { overflow-y: auto !important; }
+    .xterm-viewport { overflow-y: auto; }
   </style>
 </head>
 <body>
@@ -161,7 +203,7 @@
     // Initialize xterm.js
     const term = new Terminal({
       theme: window.MINUTES_XTERM_THEME,
-      fontFamily: "'SF Mono', Menlo, monospace",
+      fontFamily: "'Geist Mono', 'SF Mono', Menlo, monospace",
       fontSize: 13,
       lineHeight: 1.2,
       cursorBlink: true,
@@ -170,10 +212,17 @@
       allowProposedApi: true,
     });
 
+    const applyTerminalTheme = (isDark) => {
+      term.options.theme = window.getMinutesTheme(isDark);
+    };
+
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
     term.open(container);
     fitAddon.fit();
+    window.MINUTES_XTERM_THEME_QUERY.addEventListener('change', (event) => {
+      applyTerminalTheme(event.matches);
+    });
 
     let isAlive = true;
 

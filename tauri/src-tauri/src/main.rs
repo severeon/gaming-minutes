@@ -99,32 +99,18 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
     if let Ok(win) = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("Minutes")
-        .inner_size(520.0, 640.0)
-        .min_inner_size(460.0, 480.0)
+        .inner_size(520.0, 700.0)
+        .min_inner_size(420.0, 520.0)
         .transparent(true)
         .content_protected(Config::load().privacy.hide_from_screen_share)
-        .theme(Some(tauri::Theme::Dark))
         .center()
         .focused(true)
         .build()
     {
         #[cfg(target_os = "macos")]
         {
-            use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
-            // HudWindow is the macOS-blessed material for floating panels that
-            // must stay readable regardless of what content sits behind them.
-            // Sidebar (the previous choice) is adaptive — it samples background
-            // luminance and washes out over bright content, which made white text
-            // hard to read when Minutes was in front of light apps like Slack.
-            // Active state pins the effect on so it doesn't desaturate when the
-            // window loses focus.
-            apply_vibrancy(
-                &win,
-                NSVisualEffectMaterial::HudWindow,
-                Some(NSVisualEffectState::Active),
-                None,
-            )
-            .ok();
+            use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+            apply_vibrancy(&win, NSVisualEffectMaterial::Sidebar, None, None).ok();
         }
     }
 }
@@ -137,7 +123,7 @@ fn show_note_window(app: &tauri::AppHandle) {
     }
     let _win = WebviewWindowBuilder::new(app, "note", WebviewUrl::App("note.html".into()))
         .title("Add Note")
-        .inner_size(360.0, 200.0)
+        .inner_size(420.0, 260.0)
         .resizable(false)
         .content_protected(Config::load().privacy.hide_from_screen_share)
         .always_on_top(true)
@@ -210,14 +196,8 @@ pub fn update_tray_state_with_mode(app: &tauri::AppHandle, is_active: bool, is_l
     }
 
     // Notify the palette overlay that recording / live state changed
-    // so it can re-fetch its visible command list. Every recording or
-    // live transcript transition flows through `update_tray_state*`,
-    // which makes this the natural single funnel for the palette
-    // re-fetch signal. Dictation transitions emit `palette:refresh`
-    // separately from `commands.rs` because they don't touch the tray.
-    //
-    // The payload is a tagged source string so the palette can ignore
-    // refreshes that aren't relevant if it ever needs to.
+    // so it can re-fetch its visible command list. Dictation transitions
+    // emit `palette:refresh` separately from `commands.rs`.
     let _ = app.emit(
         "palette:refresh",
         serde_json::json!({
@@ -360,11 +340,11 @@ fn show_meeting_prompt(app: &tauri::AppHandle, event: &minutes_core::calendar::C
     let url = format!("meeting-prompt.html#{}", encoded);
 
     // Position: top-right of main screen, below menu bar
-    let (pos_x, pos_y) = get_top_right_position(340.0, 140.0);
+    let (pos_x, pos_y) = get_top_right_position(380.0, 190.0);
 
     match WebviewWindowBuilder::new(app, "meeting-prompt", WebviewUrl::App(url.into()))
         .title("Upcoming Meeting")
-        .inner_size(340.0, 140.0)
+        .inner_size(380.0, 190.0)
         .position(pos_x, pos_y)
         .resizable(false)
         .decorations(false)
@@ -481,15 +461,8 @@ fn main() {
         std::process::exit(code);
     }
 
-    // Load with first-run and upgrade migrations. This is the only
-    // place the desktop app reads config at startup; the CLI and
-    // non-app code continue to use `Config::load()` without
-    // migrations. See `Config::load_with_migrations` for the palette
-    // section persistence path: it ensures `[palette]` is in the user's
-    // `config.toml` so the section is discoverable, but the default
-    // shortcut is enabled for both fresh installs AND upgrades. The
-    // first-run notification fired from `setup()` further down is the
-    // explicit-consent surface for users with a real chord conflict.
+    // Load with first-run and upgrade migrations so palette defaults
+    // stay enabled across upgrades and fresh installs.
     let startup_config_snapshot = minutes_core::config::Config::load_with_migrations();
     let recording = Arc::new(AtomicBool::new(false));
     let starting = Arc::new(AtomicBool::new(false));
@@ -801,9 +774,6 @@ fn main() {
             }
 
             // Register the palette shortcut if the config opts into it.
-            // Both fresh installs and upgrades default to enabled — see
-            // `Config::load_with_migrations` for the rationale and the
-            // first-run notification call below.
             if startup_config.palette.shortcut_enabled {
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;
                 let shortcut = if startup_config.palette.shortcut.is_empty() {
@@ -827,19 +797,6 @@ fn main() {
                 }
             }
 
-            // Fire the one-shot first-run notification announcing the
-            // palette. Idempotent via the marker file at
-            // `~/.minutes/palette_first_run_shown`, so subsequent
-            // launches are no-ops. Deliberately ordered AFTER the
-            // shortcut registration above so the notification only
-            // fires when the palette is actually live and pressing
-            // the chord will do something. The notification text
-            // tells users how to disable from the settings UI in case
-            // the chord conflicts with VS Code, JetBrains, or any
-            // other app they care about. Codex pass 1 P1 was about
-            // avoiding silent hijack — this is the explicit-consent
-            // surface that obsoletes the upgrade-off default we
-            // initially shipped.
             commands::maybe_show_palette_first_run_notice(app.handle());
 
             // Calendar state for dynamic tray menu items
@@ -1295,23 +1252,6 @@ fn main() {
                     }
                 }
                 tauri::WindowEvent::Focused(false) => {
-                    // Palette overlay auto-closes on focus loss. Funnel
-                    // through the lifecycle-aware close path so the toggle
-                    // hotkey can reopen cleanly. Other windows are
-                    // unaffected.
-                    //
-                    // Codex pass 3 caught a race here: rapid Open →
-                    // Close → Open cycles can leave a focus-lost
-                    // event in flight for the OLD window instance.
-                    // Without a guard, that event would call
-                    // `close_palette_window` which then operates on
-                    // the NEW window (because `get_webview_window`
-                    // returns whichever window currently has the
-                    // label), closing the user's just-reopened
-                    // palette. Guard by inspecting the lifecycle:
-                    // only act when the state machine is actually in
-                    // `Open`, which means the focus-lost is for the
-                    // currently-tracked instance.
                     if window.label() == "palette" {
                         let app_handle = window.app_handle().clone();
                         let state = app_handle.state::<commands::AppState>();

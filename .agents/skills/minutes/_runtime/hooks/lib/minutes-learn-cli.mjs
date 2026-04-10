@@ -7,7 +7,9 @@ import {
   getLatestLearning,
   getPresentationFocus,
   inferMeetingPrepModeFromUsage,
+  readActivationState,
   normalizeLearnings,
+  recommendNextAction,
   recordPendingMeetingPrepNudge,
   rememberAlias,
   rememberExplicit,
@@ -65,6 +67,18 @@ try {
     process.exit(0);
   }
 
+  if (command === "read-activation-state") {
+    console.log(JSON.stringify({ status: "ok", result: readActivationState() }, null, 2));
+    process.exit(0);
+  }
+
+  if (command === "recommend-next-action") {
+    const [context, optionsRaw] = args;
+    const options = optionsRaw ? JSON.parse(optionsRaw) : {};
+    console.log(JSON.stringify({ status: "ok", result: recommendNextAction(context, options) }, null, 2));
+    process.exit(0);
+  }
+
   if (command === "record-pending-nudge") {
     const [mode = "auto"] = args;
     console.log(JSON.stringify({ status: "ok", result: recordPendingMeetingPrepNudge(mode) }));
@@ -103,7 +117,7 @@ try {
     JSON.stringify({
       status: "error",
       message:
-        "Usage: minutes-learn-cli.mjs set-explicit <type> <key> <value> [notes...] | set-observed <type> <key> <value> <confidence> [notes...] | set-alias <nameA> <nameB> [notes...] | aliases <name> | set-presentation-focus <surface> <value> [notes...] | get-presentation-focus <surface> | get <type> <key> | clear <type> <key> | dump",
+        "Usage: minutes-learn-cli.mjs set-explicit <type> <key> <value> [notes...] | set-observed <type> <key> <value> <confidence> [notes...] | set-alias <nameA> <nameB> [notes...] | aliases <name> | set-presentation-focus <surface> <value> [notes...] | get-presentation-focus <surface> | infer-meeting-prep-mode | read-activation-state | recommend-next-action <context> [jsonOptions] | get <type> <key> | clear <type> <key> | dump",
     }),
   );
   process.exit(1);

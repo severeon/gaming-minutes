@@ -23,6 +23,34 @@ This repo has GitHub Discussions enabled (`silverstein/minutes`). Issues are for
 - When writing user-facing error messages or help text, link to Discussions (not Issues) for support: `https://github.com/silverstein/minutes/discussions`
 - Don't file Discussions as work items — they're community conversations, not tracked tasks
 
+## Agent-Agnostic Skills (`.agents/skills/minutes/`)
+
+This repo maintains skills in **two locations** that must stay in sync:
+
+- `.claude/plugins/minutes/` — Claude Code plugin (uses `${CLAUDE_PLUGIN_ROOT}`)
+- `.agents/skills/minutes/` — Agent-agnostic mirror for Codex, Gemini, and other agents (uses `$MINUTES_SKILLS_ROOT`)
+
+**What lives where:**
+- `SKILL.md` files are mirrored 1:1. Content is identical except for path variables and platform-specific references (e.g., "open in desktop app" in the plugin version becomes a CLI command in the agents version).
+- `_runtime/hooks/lib/` contains `minutes-learn.mjs` and `minutes-learn-cli.mjs` — the behavioral learning system. These must be byte-identical copies of `.claude/plugins/minutes/hooks/lib/`.
+- Bundled scripts (`scripts/tag_apply.py`, `scripts/graph_build.py`, etc.) are also mirrored.
+
+**When you modify a skill or runtime hook:**
+```bash
+# After editing a SKILL.md in .claude/plugins/minutes/skills/<name>/
+# Port the same change to .agents/skills/minutes/<name>/SKILL.md
+# (replace ${CLAUDE_PLUGIN_ROOT} paths with $MINUTES_SKILLS_ROOT/_runtime)
+
+# After editing hooks/lib/*.mjs in .claude/plugins/minutes/
+cp -f .claude/plugins/minutes/hooks/lib/minutes-learn.mjs .agents/skills/minutes/_runtime/hooks/lib/
+cp -f .claude/plugins/minutes/hooks/lib/minutes-learn-cli.mjs .agents/skills/minutes/_runtime/hooks/lib/
+
+# Verify sync:
+diff .claude/plugins/minutes/hooks/lib/minutes-learn.mjs .agents/skills/minutes/_runtime/hooks/lib/minutes-learn.mjs
+```
+
+**Why two trees?** Claude Code plugins use `${CLAUDE_PLUGIN_ROOT}` and `user_invocable: true` frontmatter. Other agents don't have a plugin system — they read SKILL.md files from the repo directly. The `.agents/` tree is the portable version.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.

@@ -6,7 +6,6 @@ import { homedir } from "os";
 
 const AGENT_DIR = join(homedir(), ".minutes", "agent");
 const LEARNINGS_FILE = join(AGENT_DIR, "learnings.jsonl");
-
 const ALLOWED_TYPES = new Set([
   "alias",
   "workflow_preference",
@@ -56,6 +55,16 @@ export function readLearnings() {
     }
   }
   return out;
+}
+
+export function readActivationState(baseDir = homedir()) {
+  const path = join(baseDir, ".minutes", "activation-state.json");
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 export function getLatestLearning(type, key) {
@@ -287,6 +296,104 @@ export function shouldSuppressMeetingPrepNudge() {
   if (outcomes.length < 3) return false;
   const lastThree = outcomes.slice(-3);
   return lastThree.every((entry) => entry.value?.outcome === "ignored");
+}
+
+function getEffectiveMeetingPrepMode(baseDir = homedir()) {
+  const learnedPrepMode =
+    getLatestLearning("workflow_preference", "meeting_prep_mode")?.value || "auto";
+  const observedPrepMode = inferMeetingPrepModeFromUsage(baseDir);
+  return learnedPrepMode !== "auto" ? learnedPrepMode : observedPrepMode;
+}
+
+function meetingPrepSuppressed() {
+  const learnedNudgeMode =
+    getLatestLearning("nudge_feedback", "meeting_prep_nudge")?.value || "active";
+  return learnedNudgeMode === "suppress" || shouldSuppressMeetingPrepNudge();
+}
+
+export function recommendNextAction(context, options = {}) {
+  const baseDir = options.baseDir || homedir();
+  const activation = options.activation ?? readActivationState(baseDir);
+  const effectivePrepMode = options.prepMode || getEffectiveMeetingPrepMode(baseDir);
+  const suppressMeetingPrep = options.suppressMeetingPrep ?? meetingPrepSuppressed();
+  const recentMemoCount = Number(options.recentMemoCount || 0);
+  const meetingInNextHour = !!options.meetingInNextHour;
+  const minutesUntilMeeting = Number.isFinite(options.minutesUntilMeeting)
+    ? Number(options.minutesUntilMeeting)
+    : null;
+  const phase = activation?.phase || activation?.next_action || null;
+  const milestones = activation?.milestones || activation || {};
+  const hasModel = options.hasModel ?? activation?.hasModel ?? !!milestones.modelReadyAt;
+  const hasArtifact =
+    options.hasArtifact ??
+    activation?.hasSavedArtifact ??
+    !!milestones.firstArtifactSavedAt;
+
+  if (context === "after-recording") {
+    return {
+      action: "/minutes-debrief",
+      label: "Debrief the last meeting",
+      reason: "A meeting just ended, so the highest-value next move is to capture decisions, actions, and follow-up while context is fresh.",
+      kind: "skill",
+    };
+  }
+
+  if (context === "recent-memo" && recentMemoCount > 0) {
+    return {
+      action: "/minutes-ideas",
+      label: "Review recent voice memos",
+      reason: "Recent memos exist, so the best next move is to turn them into usable recall before they fade into raw text.",
+      kind: "skill",
+    };
+  }
+
+  if (context === "startup" && meetingInNextHour && !suppressMeetingPrep) {
+    const preferBrief =
+      effectivePrepMode === "brief" ||
+      (effectivePrepMode === "auto" && minutesUntilMeeting != null && minutesUntilMeeting < 20);
+    return {
+      action: preferBrief ? "/minutes-brief" : "/minutes-prep",
+      label: preferBrief ? "Generate a fast meeting brief" : "Prepare for the upcoming meeting",
+      reason: preferBrief
+        ? "A meeting is coming up soon, so the fastest high-signal workflow is the brief."
+        : "A meeting is coming up and the learned preference favors the deeper prep workflow.",
+      kind: "skill",
+      mode: preferBrief ? "brief" : "prep",
+    };
+  }
+
+  if (context === "no-artifact" || (!hasArtifact && context === "startup")) {
+    if (!hasModel) {
+      return {
+        action: "download-model",
+        label: "Download the speech model",
+        reason: "Minutes cannot create the first artifact until a speech model is installed.",
+        kind: "product",
+      };
+    }
+    return {
+      action: "start-first-recording",
+      label: "Create the first artifact",
+      reason: "The product is most likely to stick after the first durable artifact exists, so recording a short test is the best next move.",
+      kind: "product",
+    };
+  }
+
+  if (context === "first-artifact-saved" || (hasArtifact && !milestones.nextStepNudgeShownAt)) {
+    return {
+      action: "create-draft",
+      label: "Turn the latest meeting into a draft",
+      reason: "The first saved artifact should immediately turn into useful work product so the workflow teaches itself.",
+      kind: "product",
+    };
+  }
+
+  return {
+    action: "explore-minutes",
+    label: "Explore the next Minutes workflow",
+    reason: "No higher-priority activation cue is active, so the product should stay quiet and let the current task lead.",
+    kind: "product",
+  };
 }
 
 export function getAliasCluster(name) {

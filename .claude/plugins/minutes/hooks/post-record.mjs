@@ -202,10 +202,35 @@ try {
   logError("speaker-attribution-check", err);
 }
 
-// --- Phase 3: Output alerts as additional context ---
+// --- Phase 3: Next-skill nudge ---
+// Use the learned recommendation engine to suggest the best next action.
+// Today this always returns /minutes-debrief for "after-recording" context,
+// but the learn system may evolve the recommendation based on user behavior.
+try {
+  const { recommendNextAction } = await import("./lib/minutes-learn.mjs");
+  const recommendation = recommendNextAction("after-recording");
+  if (recommendation?.action) {
+    alerts.push(
+      `Recording processed. Run ${recommendation.action} to capture decisions while context is fresh, or /minutes-tag for a quick outcome label.`
+    );
+  } else {
+    // Fallback if recommendNextAction returns null/undefined
+    alerts.push(
+      `Recording processed. Run /minutes-debrief to capture decisions while context is fresh, or /minutes-tag for a quick outcome label.`
+    );
+  }
+} catch (err) {
+  logError("next-action-recommendation", err);
+  // Fallback: always nudge debrief even if the learn system fails
+  alerts.push(
+    `Recording processed. Run /minutes-debrief to capture decisions while context is fresh, or /minutes-tag for a quick outcome label.`
+  );
+}
+
+// --- Phase 4: Output alerts as additional context ---
 if (alerts.length > 0) {
   const output = {
-    additionalContext: `Post-meeting alert:\n${alerts.map((a) => `- ${a}`).join("\n")}\n\nRun /minutes debrief for the full post-meeting analysis.`,
+    additionalContext: `Post-meeting intelligence:\n${alerts.map((a) => `- ${a}`).join("\n")}`,
   };
   console.log(JSON.stringify(output));
 }

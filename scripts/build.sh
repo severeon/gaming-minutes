@@ -1,6 +1,12 @@
 #!/bin/bash
-# Build everything: CLI, Tauri app, and optional production-style install
+# Build everything: CLI, Tauri app, and optional production-style install (macOS only)
 set -euo pipefail
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "Error: build.sh is macOS-only (requires xcrun, swiftc, codesign)."
+    echo "For cross-platform CLI builds: cargo build --release -p minutes-cli"
+    exit 1
+fi
 
 export CXXFLAGS="-I$(xcrun --show-sdk-path)/usr/include/c++/v1"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
@@ -32,23 +38,39 @@ echo "=== Signing + Installing CLI ==="
 mkdir -p ~/.local/bin
 codesign -s - -f target/release/minutes 2>/dev/null || true
 cp -f target/release/minutes ~/.local/bin/minutes && echo "  Installed to ~/.local/bin/"
-# Also try homebrew cellar if it exists
-CELLAR="/opt/homebrew/Cellar/minutes/0.1.0/bin"
-if [ -d "$CELLAR" ]; then
-    cp -f target/release/minutes "$CELLAR/minutes" 2>/dev/null || true
-fi
 
 echo ""
 
 # Install to /Applications if --install flag is passed
-if [[ "$*" == *"--install"* ]]; then
+if [[ " $* " == *" --install "* ]]; then
     echo "=== Installing app to /Applications ==="
     cp -rf target/release/bundle/macos/Minutes.app /Applications/
     echo "  Installed to /Applications/Minutes.app"
 fi
 
 echo "=== Done ==="
-echo "  CLI:  $(which minutes) — $(minutes --version 2>&1)"
+RESOLVED="$(which minutes 2>/dev/null || true)"
+if [ -n "$RESOLVED" ]; then
+    echo "  CLI:  $RESOLVED — $("$RESOLVED" --version 2>&1)"
+else
+    echo "  CLI:  ~/.local/bin/minutes (not in PATH) — $(~/.local/bin/minutes --version 2>&1 || echo 'unknown')"
+fi
+if [ -n "$RESOLVED" ]; then
+    RESOLVED_REAL="$(readlink -f "$RESOLVED" 2>/dev/null || echo "$RESOLVED")"
+    EXPECTED_REAL="$(readlink -f "$HOME/.local/bin/minutes" 2>/dev/null || echo "$HOME/.local/bin/minutes")"
+fi
+if [ -n "$RESOLVED" ] && [ "$RESOLVED_REAL" != "$EXPECTED_REAL" ]; then
+    echo ""
+    echo "  ⚠  PATH shadowing: 'minutes' resolves to $RESOLVED"
+    echo "     The build installed to ~/.local/bin/minutes but a stale binary takes priority."
+    if [[ "$RESOLVED" == */homebrew/* ]] || [[ "$RESOLVED" == */Cellar/* ]]; then
+        echo "     Fix: brew unlink minutes"
+    elif [[ "$RESOLVED" == */.cargo/bin/* ]]; then
+        echo "     Fix: cargo uninstall minutes"
+    else
+        echo "     Fix: rm '$RESOLVED'"
+    fi
+fi
 echo "  App:  target/release/bundle/macos/Minutes.app"
 echo ""
 if [ -d "/Applications/Minutes.app" ]; then

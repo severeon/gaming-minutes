@@ -23,33 +23,34 @@ This repo has GitHub Discussions enabled (`silverstein/minutes`). Issues are for
 - When writing user-facing error messages or help text, link to Discussions (not Issues) for support: `https://github.com/silverstein/minutes/discussions`
 - Don't file Discussions as work items — they're community conversations, not tracked tasks
 
-## Agent-Agnostic Skills (`.agents/skills/minutes/`)
+## Portable Agent Skills (`.agents/skills/minutes/`, `.opencode/skills/`)
 
-This repo maintains skills in **two locations** that must stay in sync:
+This repo maintains skill outputs in **three locations**:
 
 - `.claude/plugins/minutes/` — Claude Code plugin (uses `${CLAUDE_PLUGIN_ROOT}`)
 - `.agents/skills/minutes/` — Agent-agnostic mirror for Codex, Gemini, and other agents (uses `$MINUTES_SKILLS_ROOT`)
+- `.opencode/skills/` — OpenCode-native mirror (one-level discovery path + matching `.opencode/commands/`)
 
 **What lives where:**
 - `SKILL.md` files are mirrored 1:1. Content is identical except for path variables and platform-specific references (e.g., "open in desktop app" in the plugin version becomes a CLI command in the agents version).
-- `_runtime/hooks/lib/` contains `minutes-learn.mjs` and `minutes-learn-cli.mjs` — the behavioral learning system. These must be byte-identical copies of `.claude/plugins/minutes/hooks/lib/`.
-- Bundled scripts (`scripts/tag_apply.py`, `scripts/graph_build.py`, etc.) are also mirrored.
+- `_runtime/hooks/lib/` contains `minutes-learn.mjs` and `minutes-learn-cli.mjs` — the behavioral learning system. These must stay byte-identical across `.agents/skills/minutes/_runtime/hooks/lib/` and `.opencode/skills/_runtime/hooks/lib/`.
+- Bundled scripts (`scripts/tag_apply.py`, `scripts/graph_build.py`, etc.) are mirrored into both portable trees.
+- `.opencode/commands/*.md` provides native `/minutes-*` slash commands for OpenCode and is generated from the same canonical skill sources.
 
 **When you modify a skill or runtime hook:**
 ```bash
-# After editing a SKILL.md in .claude/plugins/minutes/skills/<name>/
-# Port the same change to .agents/skills/minutes/<name>/SKILL.md
-# (replace ${CLAUDE_PLUGIN_ROOT} paths with $MINUTES_SKILLS_ROOT/_runtime)
+# Preferred workflow: edit the canonical source under tooling/skills/sources/<name>/skill.md
+# then regenerate every host surface from one place.
+cd tooling/skills
+npm run build
+npm run compile
 
-# After editing hooks/lib/*.mjs in .claude/plugins/minutes/
-cp -f .claude/plugins/minutes/hooks/lib/minutes-learn.mjs .agents/skills/minutes/_runtime/hooks/lib/
-cp -f .claude/plugins/minutes/hooks/lib/minutes-learn-cli.mjs .agents/skills/minutes/_runtime/hooks/lib/
-
-# Verify sync:
-diff .claude/plugins/minutes/hooks/lib/minutes-learn.mjs .agents/skills/minutes/_runtime/hooks/lib/minutes-learn.mjs
+# Verify generated outputs are current:
+npm run compile:dry
+npm run check
 ```
 
-**Why two trees?** Claude Code plugins use `${CLAUDE_PLUGIN_ROOT}` and `user_invocable: true` frontmatter. Other agents don't have a plugin system — they read SKILL.md files from the repo directly. The `.agents/` tree is the portable version.
+**Why multiple trees?** Claude Code plugins use `${CLAUDE_PLUGIN_ROOT}` and plugin metadata. Codex/Gemini consume the `.agents/skills/minutes/` mirror. OpenCode only auto-discovers `skills/*/SKILL.md` one directory deep and has its own `.opencode/commands/` surface, so it needs a flattened generated tree.
 
 ## Non-Interactive Shell Commands
 

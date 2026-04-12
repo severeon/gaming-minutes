@@ -62,6 +62,21 @@ async function main(): Promise<void> {
       }
 
       if (
+        host.name === "opencode" &&
+        (artifact.body.includes("${CLAUDE_PLUGIN_ROOT}") ||
+          artifact.body.includes(".claude/plugins/minutes") ||
+          artifact.body.includes(".agents/skills/minutes") ||
+          artifact.body.includes("$MINUTES_SKILL_ROOT/skills/") ||
+          artifact.body.includes("$MINUTES_SKILLS_ROOT/skills/"))
+      ) {
+        failures.push({
+          skill: skill.id,
+          host: host.name,
+          message: "OpenCode output still contains unresolved Claude/Codex or invalid helper path references",
+        });
+      }
+
+      if (
         host.name === "codex" &&
         !artifact.sidecarFiles.some((file) => file.relativePath.endsWith("agents/openai.yaml"))
       ) {
@@ -85,20 +100,36 @@ async function main(): Promise<void> {
           message: "Codex output declares assets but no emitted asset files were planned",
         });
       }
+
+      if (
+        host.name === "opencode" &&
+        (skill.frontmatter.assets?.scripts?.length ||
+          skill.frontmatter.assets?.templates?.length ||
+          skill.frontmatter.assets?.references?.length) &&
+        artifact.assetFiles.length === 0
+      ) {
+        failures.push({
+          skill: skill.id,
+          host: host.name,
+          message: "OpenCode output declares assets but no emitted asset files were planned",
+        });
+      }
     }
   }
 
-  const codexRuntimeFiles = [
+  const runtimeFiles = [
     ".agents/skills/minutes/_runtime/hooks/lib/minutes-learn.mjs",
     ".agents/skills/minutes/_runtime/hooks/lib/minutes-learn-cli.mjs",
+    ".opencode/skills/_runtime/hooks/lib/minutes-learn.mjs",
+    ".opencode/skills/_runtime/hooks/lib/minutes-learn-cli.mjs",
   ];
 
-  for (const runtimePath of codexRuntimeFiles) {
+  for (const runtimePath of runtimeFiles) {
     if (!(await import("node:fs/promises").then(({ access }) => access(path.join(rootDir, "..", "..", runtimePath)).then(() => true).catch(() => false)))) {
       failures.push({
         skill: "_runtime",
-        host: "codex",
-        message: `Missing generated Codex runtime helper: ${runtimePath}`,
+        host: runtimePath.includes(".opencode/") ? "opencode" : "codex",
+        message: `Missing generated runtime helper: ${runtimePath}`,
       });
     }
   }

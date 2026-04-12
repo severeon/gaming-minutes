@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   }
 
   for (const skill of skills) {
-    for (const hostName of ["claude", "codex"] as const) {
+    for (const hostName of ["claude", "codex", "opencode"] as const) {
       const artifact = renderSkillForHost(skill, getHostConfig(hostName));
       const skillPath = path.join(repoRoot, artifact.outputPath);
       if (!(await exists(skillPath))) {
@@ -87,9 +87,11 @@ async function main(): Promise<void> {
   for (const runtimePath of [
     ".agents/skills/minutes/_runtime/hooks/lib/minutes-learn.mjs",
     ".agents/skills/minutes/_runtime/hooks/lib/minutes-learn-cli.mjs",
+    ".opencode/skills/_runtime/hooks/lib/minutes-learn.mjs",
+    ".opencode/skills/_runtime/hooks/lib/minutes-learn-cli.mjs",
   ]) {
     if (!(await exists(path.join(repoRoot, runtimePath)))) {
-      problems.push(`Missing generated codex runtime helper: ${runtimePath}`);
+      problems.push(`Missing generated runtime helper: ${runtimePath}`);
     }
   }
 
@@ -120,7 +122,7 @@ async function main(): Promise<void> {
         status: "ok",
         skillCount: skills.length,
         warnings,
-        verified_hosts: ["claude", "codex"],
+        verified_hosts: ["claude", "codex", "opencode"],
       },
       null,
       2,

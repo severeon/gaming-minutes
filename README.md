@@ -18,6 +18,7 @@ Record a meeting. Capture a voice memo on a walk. Ask Claude *"what did I promis
 <p align="center">
   <a href="#claude-code-plugin">Claude Code</a> &bull;
   <a href="#any-mcp-client-claude-code-codex-gemini-cli-claude-desktop-or-your-own-agent">Codex</a> &bull;
+  <a href="#opencode-cli">OpenCode</a> &bull;
   <a href="#any-mcp-client-claude-code-codex-gemini-cli-claude-desktop-or-your-own-agent">Gemini CLI</a> &bull;
   <a href="#any-mcp-client-claude-code-codex-gemini-cli-claude-desktop-or-your-own-agent">Claude Desktop</a> &bull;
   <a href="#mistral-vibe">Mistral Vibe</a> &bull;
@@ -40,7 +41,7 @@ brew tap silverstein/tap && brew install minutes
 cargo install minutes-cli                          # macOS/Linux
 cargo install minutes-cli --no-default-features    # Windows (see install notes below)
 
-# MCP server only — no Rust needed (Claude Code, Codex, Gemini CLI, Claude Desktop, etc.)
+# MCP server only — no Rust needed (Claude Code, Codex, OpenCode, Gemini CLI, Claude Desktop, etc.)
 npx minutes-mcp
 ```
 
@@ -66,11 +67,13 @@ The README is now the product overview and install guide, not the only home for 
 - `Desktop app` — `brew install --cask silverstein/tap/minutes`
   Best for first recording, live capture, Recall, and post-meeting artifact work.
 - `MCP server` — `npx minutes-mcp`
-  Best for agent-first search, recall, and meeting-memory workflows in Claude Desktop, Codex, Gemini CLI, and other MCP clients.
+  Best for agent-first search, recall, and meeting-memory workflows in Claude Desktop, Codex, OpenCode, Gemini CLI, and other MCP clients.
 - `CLI` — `brew tap silverstein/tap && brew install minutes`
   Best for terminal-first local operator workflows, import, search, and vault sync.
 - `Claude Code plugin` — `claude plugin marketplace add silverstein/minutes`
   Best for workflow guidance, prep, debrief, and meeting coaching with the lifecycle skills and hooks.
+- `OpenCode project integration` — built-in `.opencode/skills/` + `.opencode/commands/`
+  Best for OpenCode users who want native `/minutes-*` commands plus the portable Minutes skill pack in the repo.
 
 ## How it works
 
@@ -141,7 +144,7 @@ minutes consistency                                # Flag contradicting decision
 minutes live                                     # Start real-time transcription
 minutes stop                                     # Stop live session
 ```
-Streams whisper transcription to a JSONL file in real time — any AI agent can read it mid-meeting for live coaching. The MCP `read_live_transcript` tool provides delta reads (by line cursor or wall-clock duration). Works with Claude Code, Codex, Gemini CLI, or any agent that reads files. The Tauri desktop app has a Live Mode toggle that starts this with one click.
+Streams whisper transcription to a JSONL file in real time — any AI agent can read it mid-meeting for live coaching. The MCP `read_live_transcript` tool provides delta reads (by line cursor or wall-clock duration). Works with Claude Code, Codex, OpenCode, Gemini CLI, or any agent that reads files. The Tauri desktop app has a Live Mode toggle that starts this with one click.
 
 ### Dictation mode
 ```bash
@@ -395,7 +398,7 @@ You: "Any open action items for me?"
 Claude: [calls list_meetings] → scans frontmatter → reports open items
 ```
 
-### Any MCP client (Claude Code, Codex, Gemini CLI, Claude Desktop, or your own agent)
+### Any MCP client (Claude Code, Codex, OpenCode, Gemini CLI, Claude Desktop, or your own agent)
 
 Minutes exposes a standard MCP server. Point any MCP-compatible client at it:
 
@@ -419,6 +422,43 @@ Canonical MCP reference now lives at:
 The MCP surface currently includes recording control, meeting search/retrieval, relationship memory, structured insights, live transcript reading, dictation, QMD integration, and an interactive dashboard resource. Tool names, resource URIs, and prompt templates are generated from the live product surface instead of hand-maintained in this README.
 
 **Interactive dashboard (Claude Desktop):** tools render an inline interactive UI via [MCP Apps](https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/apps) — meeting list with filter/search, detail view with fullscreen + "Send to Claude" context injection, People tab with relationship cards and click-through profiles, and consistency reports. Text-only clients see the same data as plain text.
+
+### OpenCode CLI
+
+Minutes now ships a project-local OpenCode integration layer:
+
+- `.opencode/skills/minutes-*` for OpenCode's one-level skill discovery
+- `.opencode/commands/minutes-*.md` so you can run native slash commands like `/minutes-brief`
+- the same portable runtime helpers used by the Codex/Gemini skill pack
+
+OpenCode also reads this repo's `AGENTS.md`, so the project rules carry over automatically.
+
+For MCP tools in OpenCode, the official CLI flow is:
+
+```bash
+opencode mcp add
+```
+
+Choose a local stdio server and point it at:
+
+```bash
+npx minutes-mcp
+```
+
+For the native skill/command workflow, just launch OpenCode in this repo:
+
+```bash
+opencode
+```
+
+Then use commands like:
+
+```text
+/minutes-brief
+/minutes-prep Alex
+/minutes-debrief
+/minutes-weekly
+```
 
 ### Mistral Vibe
 
@@ -504,10 +544,10 @@ The currently verified path for Cowork is plugin-oriented, not “raw MCP automa
 ### Optional: automated summarization
 
 ```toml
-# Use your existing Claude Code or Codex subscription (recommended)
+# Use your existing Claude Code, Codex, or OpenCode subscription (recommended)
 [summarization]
 engine = "agent"
-agent_command = "claude"  # or "codex" for OpenAI Codex users
+agent_command = "claude"  # or "codex" / "opencode"
 
 # Or use Mistral API (requires MISTRAL_API_KEY)
 [summarization]
@@ -897,10 +937,10 @@ model = "small"           # whisper: tiny (75MB), base, small (466MB), medium, l
 
 [summarization]
 engine = "none"           # Default: Claude summarizes conversationally via MCP
-                          # "agent" = uses your Claude Code or Codex subscription (no API key)
+                          # "agent" = uses your Claude Code, Codex, or OpenCode subscription (no API key)
                           # "ollama" = local, free
                           # "claude" / "openai" = direct API key (legacy)
-agent_command = "claude"  # Which CLI to use when engine = "agent" (claude, codex, etc.)
+agent_command = "claude"  # Which CLI to use when engine = "agent" (claude, codex, opencode, etc.)
 ollama_url = "http://localhost:11434"
 ollama_model = "llama3.2"
 

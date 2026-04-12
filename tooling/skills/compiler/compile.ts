@@ -106,7 +106,11 @@ async function main(): Promise<void> {
     }
   }
 
-  if (options.hosts.includes("codex")) {
+  for (const runtimeHost of options.hosts.filter((host) => host === "codex" || host === "opencode")) {
+    const runtimePrefix =
+      runtimeHost === "codex"
+        ? ".agents/skills/minutes/_runtime/hooks/lib/"
+        : ".opencode/skills/_runtime/hooks/lib/";
     for (const runtimeRelative of [
       ".claude/plugins/minutes/hooks/lib/minutes-learn.mjs",
       ".claude/plugins/minutes/hooks/lib/minutes-learn-cli.mjs",
@@ -115,11 +119,11 @@ async function main(): Promise<void> {
       const runtimeContent = await readFile(runtimeSource, "utf8");
       const runtimeTarget = runtimeRelative.replace(
         ".claude/plugins/minutes/hooks/lib/",
-        ".agents/skills/minutes/_runtime/hooks/lib/",
+        runtimePrefix,
       );
       const runtimeStatus = await compareOrWrite(rootDir, runtimeTarget, runtimeContent, options.dryRun);
       if (runtimeStatus === "changed") {
-        changes.push({ host: "codex", path: runtimeTarget, kind: "runtime" });
+        changes.push({ host: runtimeHost, path: runtimeTarget, kind: "runtime" });
       }
     }
   }

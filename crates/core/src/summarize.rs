@@ -4,9 +4,9 @@ use crate::config::Config;
 // LLM summarization module (pluggable).
 //
 // Supported engines:
-//   "auto"    → Detect installed AI CLI (claude > codex > gemini), skip if none found (default)
+//   "auto"    → Detect installed AI CLI (claude > codex > gemini > opencode), skip if none found (default)
 //   "none"    → Skip summarization — Claude summarizes via MCP when asked
-//   "agent"   → Agent CLI (claude -p, codex exec, gemini -p) — uses existing subscription, no API key
+//   "agent"   → Agent CLI (claude -p, codex exec, gemini -p, opencode run) — uses existing subscription, no API key
 //   "ollama"  → Local Ollama server (no API key needed)
 //   "claude"  → Anthropic Claude API (ANTHROPIC_API_KEY env var, legacy)
 //   "openai"  → OpenAI API (OPENAI_API_KEY env var, legacy)
@@ -55,7 +55,9 @@ pub fn summarize_with_screens(
                 tracing::info!(agent = %agent, "auto-detected AI CLI for summarization");
                 summarize_with_agent_cmd(transcript, config, &agent)
             } else {
-                tracing::info!("no AI CLI found (claude, codex, gemini), skipping summarization");
+                tracing::info!(
+                    "no AI CLI found (claude, codex, gemini, opencode), skipping summarization"
+                );
                 return None;
             }
         }
@@ -274,17 +276,18 @@ fn parse_summary_response(response: &str) -> Summary {
 // No API keys needed — uses the agent's own auth (subscription, OAuth, etc.)
 //
 // Supported agents:
-//   "claude" → `claude -p -` (Claude Code CLI)
-//   "codex"  → `codex exec - -s read-only` (OpenAI Codex CLI)
-//   "gemini" → `gemini -p -` (Gemini CLI)
+//   "claude"   → `claude -p -` (Claude Code CLI)
+//   "codex"    → `codex exec - -s read-only` (OpenAI Codex CLI)
+//   "gemini"   → `gemini -p -` (Gemini CLI)
+//   "opencode" → `opencode run --file <prompt-file> ...` (OpenCode CLI)
 //   Any other → treated as a command that accepts a prompt on stdin
 //
 // The agent command is configurable via [summarization] agent_command.
 
-/// Detect the first available AI CLI in preference order: claude > codex > gemini.
+/// Detect the first available AI CLI in preference order: claude > codex > gemini > opencode.
 /// Returns the resolved path if found and executable, None otherwise.
 pub(crate) fn detect_agent_cli() -> Option<String> {
-    for cmd in &["claude", "codex", "gemini"] {
+    for cmd in &["claude", "codex", "gemini", "opencode"] {
         let resolved = resolve_agent_path(cmd);
         // resolve_agent_path returns the bare name if not found — check if we got a real path
         if (resolved != *cmd || std::path::Path::new(&resolved).exists())
@@ -361,6 +364,105 @@ pub(crate) fn resolve_agent_path(cmd: &str) -> String {
     cmd.to_string()
 }
 
+fn matches_agent_binary(agent_cmd: &str, expected: &str) -> bool {
+    if agent_cmd == expected {
+        return true;
+    }
+
+    let path = std::path::Path::new(agent_cmd);
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| stem.eq_ignore_ascii_case(expected))
+        .unwrap_or(false)
+}
+
+struct AgentInvocation {
+    cmd: String,
+    args: Vec<String>,
+    stdin_payload: Option<Vec<u8>>,
+    cleanup_path: Option<std::path::PathBuf>,
+}
+
+fn write_agent_prompt_file(
+    agent_name: &str,
+    prompt: &str,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let mut path = std::env::temp_dir();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| {
+            format!(
+                "system clock error while preparing {} prompt: {}",
+                agent_name, e
+            )
+        })?
+        .as_nanos();
+    path.push(format!(
+        "minutes-{}-{}-{}.md",
+        agent_name,
+        std::process::id(),
+        timestamp
+    ));
+    std::fs::write(&path, prompt)?;
+    Ok(path)
+}
+
+fn prepare_agent_invocation(
+    agent_cmd: &str,
+    prompt: &str,
+) -> Result<AgentInvocation, Box<dyn std::error::Error>> {
+    if matches_agent_binary(agent_cmd, "claude") {
+        return Ok(AgentInvocation {
+            cmd: agent_cmd.to_string(),
+            args: vec!["-p".into(), "-".into()],
+            stdin_payload: Some(prompt.as_bytes().to_vec()),
+            cleanup_path: None,
+        });
+    }
+
+    if matches_agent_binary(agent_cmd, "codex") {
+        return Ok(AgentInvocation {
+            cmd: agent_cmd.to_string(),
+            args: vec!["exec".into(), "-".into(), "-s".into(), "read-only".into()],
+            stdin_payload: Some(prompt.as_bytes().to_vec()),
+            cleanup_path: None,
+        });
+    }
+
+    if matches_agent_binary(agent_cmd, "gemini") {
+        return Ok(AgentInvocation {
+            cmd: agent_cmd.to_string(),
+            args: vec!["-p".into(), "-".into()],
+            stdin_payload: Some(prompt.as_bytes().to_vec()),
+            cleanup_path: None,
+        });
+    }
+
+    if matches_agent_binary(agent_cmd, "opencode") {
+        let prompt_path = write_agent_prompt_file("opencode", prompt)?;
+        return Ok(AgentInvocation {
+            cmd: agent_cmd.to_string(),
+            args: vec![
+                "run".into(),
+                "--file".into(),
+                prompt_path.display().to_string(),
+                "Follow the attached file exactly and return only the requested output.".into(),
+            ],
+            stdin_payload: None,
+            cleanup_path: Some(prompt_path),
+        });
+    }
+
+    Ok(AgentInvocation {
+        cmd: agent_cmd.to_string(),
+        args: vec![],
+        stdin_payload: Some(prompt.as_bytes().to_vec()),
+        cleanup_path: None,
+    })
+}
+
 /// Summarize using a specific agent command (used by the "auto" engine).
 fn summarize_with_agent_cmd(
     transcript: &str,
@@ -409,27 +511,19 @@ fn summarize_with_agent_impl(
 
     tracing::info!(agent = %agent_cmd, prompt_len = prompt.len(), "summarizing via agent CLI");
 
-    // All agents use stdin/pipe to avoid OS ARG_MAX limits.
-    // A 100K transcript as a CLI argument works on most systems but is fragile.
-    // Piping is universally safe and works with all agents.
-    let (cmd, args): (&str, Vec<&str>) = if agent_cmd == "claude" || agent_cmd.ends_with("/claude")
-    {
-        (&agent_cmd, vec!["-p", "-"])
-    } else if agent_cmd == "codex" || agent_cmd.ends_with("/codex") {
-        (&agent_cmd, vec!["exec", "-", "-s", "read-only"])
-    } else if agent_cmd == "gemini" || agent_cmd.ends_with("/gemini") {
-        (&agent_cmd, vec!["-p", "-"])
-    } else {
-        (&agent_cmd, vec![])
-    };
+    let invocation = prepare_agent_invocation(&agent_cmd, &prompt)?;
+    let cleanup_path = invocation.cleanup_path.clone();
 
-    let mut child = std::process::Command::new(cmd)
-        .args(&args)
+    let mut child = std::process::Command::new(&invocation.cmd)
+        .args(&invocation.args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| {
+            if let Some(path) = cleanup_path.as_ref() {
+                let _ = std::fs::remove_file(path);
+            }
             format!(
                 "Agent '{}' not found or failed to start: {}. \
                  Install it or change [summarization] agent_command in config.toml",
@@ -437,13 +531,10 @@ fn summarize_with_agent_impl(
             )
         })?;
 
-    // Write prompt to stdin
     if let Some(mut stdin) = child.stdin.take() {
-        // Write in a thread to avoid deadlock if the process buffer fills
-        let prompt_bytes = prompt.into_bytes();
+        let prompt_bytes = invocation.stdin_payload.clone().unwrap_or_default();
         std::thread::spawn(move || {
             stdin.write_all(&prompt_bytes).ok();
-            // stdin drops here, closing the pipe
         });
     }
 
@@ -456,6 +547,9 @@ fn summarize_with_agent_impl(
                 let output = child
                     .wait_with_output()
                     .map_err(|e| format!("Failed to read agent output: {}", e))?;
+                if let Some(path) = cleanup_path.as_ref() {
+                    let _ = std::fs::remove_file(path);
+                }
 
                 if !status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -481,6 +575,9 @@ fn summarize_with_agent_impl(
                 // Still running
                 if start.elapsed() > timeout {
                     child.kill().ok();
+                    if let Some(path) = cleanup_path.as_ref() {
+                        let _ = std::fs::remove_file(path);
+                    }
                     return Err(format!(
                         "Agent '{}' timed out after {}s",
                         agent_cmd,
@@ -1113,25 +1210,22 @@ fn run_speaker_mapping_via_agent(
         config.summarization.agent_command.clone()
     };
     let agent_cmd = resolve_agent_path(&agent_cmd);
-    let (cmd, args): (&str, Vec<&str>) = if agent_cmd == "claude" || agent_cmd.ends_with("/claude")
-    {
-        (&agent_cmd, vec!["-p", "-"])
-    } else if agent_cmd == "codex" || agent_cmd.ends_with("/codex") {
-        (&agent_cmd, vec!["exec", "-", "-s", "read-only"])
-    } else if agent_cmd == "gemini" || agent_cmd.ends_with("/gemini") {
-        (&agent_cmd, vec!["-p", "-"])
-    } else {
-        (&agent_cmd, vec![])
-    };
-    let mut child = std::process::Command::new(cmd)
-        .args(&args)
+    let invocation = prepare_agent_invocation(&agent_cmd, prompt)?;
+    let cleanup_path = invocation.cleanup_path.clone();
+    let mut child = std::process::Command::new(&invocation.cmd)
+        .args(&invocation.args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Agent '{}' not found: {}", agent_cmd, e))?;
+        .map_err(|e| {
+            if let Some(path) = cleanup_path.as_ref() {
+                let _ = std::fs::remove_file(path);
+            }
+            format!("Agent '{}' not found: {}", agent_cmd, e)
+        })?;
     if let Some(mut stdin) = child.stdin.take() {
-        let bytes = prompt.as_bytes().to_vec();
+        let bytes = invocation.stdin_payload.clone().unwrap_or_default();
         std::thread::spawn(move || {
             stdin.write_all(&bytes).ok();
         });
@@ -1142,6 +1236,9 @@ fn run_speaker_mapping_via_agent(
         match child.try_wait() {
             Ok(Some(status)) => {
                 let output = child.wait_with_output()?;
+                if let Some(path) = cleanup_path.as_ref() {
+                    let _ = std::fs::remove_file(path);
+                }
                 if !status.success() {
                     return Err(format!(
                         "Agent failed: {}",
@@ -1154,6 +1251,9 @@ fn run_speaker_mapping_via_agent(
             Ok(None) => {
                 if start.elapsed() > timeout {
                     child.kill().ok();
+                    if let Some(path) = cleanup_path.as_ref() {
+                        let _ = std::fs::remove_file(path);
+                    }
                     return Err("Agent timed out".into());
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));

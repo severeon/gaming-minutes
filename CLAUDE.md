@@ -139,7 +139,7 @@ certificate or local notarization credentials.
 | **Release warranted?** | New/removed MCP tools, new CLI commands, user-facing features | Manifest changes (new tools, updated description) don't reach Claude Desktop users until a release is cut and `.mcpb` is uploaded. If the change is user-visible, plan a release. |
 | **marketplace.json plugin version bumped** | Any change to `.claude/plugins/minutes/` that should reach users | `.claude-plugin/marketplace.json` → `plugins[0].version` is the **single field Claude Code reads** to decide what "latest" means for plugin-only releases. Bumping `plugin.json` alone is not enough — if `marketplace.json` still advertises the old version, `/plugin update minutes@minutes` reports "already at latest" and users silently miss everything shipped. Keep all three version surfaces in lockstep: `marketplace.json` `plugins[0].version`, `.claude/plugins/minutes/plugin.json`, `.claude/plugins/minutes/.claude-plugin/plugin.json`. |
 | **Plugin release upgrade snippet in notes** | Any plugin-only release (push-to-main, no tag) | Plugin releases don't auto-deliver to existing users. Every release-note body must include the two-command refresh sequence: `/plugin marketplace update minutes` then `/plugin update minutes@minutes`, then restart Claude Code. Without this, pre-release adopters stay silently stuck on the version they installed originally — their local marketplace mirror is a git clone that only pulls when explicitly asked. See `notes-release-plugin-v0.8.0.md` for the template. |
-| **`.agents/` sync** | Any change to `.claude/plugins/minutes/skills/` or `.claude/plugins/minutes/hooks/lib/` | The `.agents/skills/minutes/` tree is the agent-agnostic mirror (Codex, Gemini, etc.). SKILL.md content, `_runtime/hooks/lib/` files, and bundled scripts must stay in sync. Diff: `diff .claude/plugins/minutes/hooks/lib/minutes-learn.mjs .agents/skills/minutes/_runtime/hooks/lib/minutes-learn.mjs` and spot-check any modified SKILL.md against its `.agents/` counterpart. Path vars differ (`${CLAUDE_PLUGIN_ROOT}` vs `$MINUTES_SKILLS_ROOT/_runtime`), content must match. |
+| **Portable skill outputs sync** | Any change to `tooling/skills/sources/`, `.claude/plugins/minutes/skills/`, or `.claude/plugins/minutes/hooks/lib/` | The portable skill outputs live in both `.agents/skills/minutes/` (Codex/Gemini/etc.) and `.opencode/skills/` + `.opencode/commands/` (OpenCode). Rebuild from canonical sources with `cd tooling/skills && npm run build && npm run compile`, then verify with `npm run compile:dry && npm run check`. Runtime helpers must stay byte-identical across `.claude/plugins/minutes/hooks/lib/`, `.agents/skills/minutes/_runtime/hooks/lib/`, and `.opencode/skills/_runtime/hooks/lib/`. |
 
 ## Release Checklist
 
@@ -318,7 +318,9 @@ minutes/
 ├── site/                      # Landing page (Next.js + Remotion demo player)
 ├── tauri/                     # Tauri v2 menu bar app + singleton AI Assistant
 ├── .claude/plugins/minutes/   # Claude Code plugin — 18 skills + 1 agent + 2 hooks
-├── .agents/skills/minutes/    # Agent-agnostic skills mirror (Codex, Gemini) — must stay in sync with .claude/plugins/
+├── .agents/skills/minutes/    # Portable skills mirror (Codex, Gemini, other AGENTS-aware agents)
+├── .opencode/skills/          # OpenCode-native flattened skills mirror + runtime helpers
+├── .opencode/commands/        # OpenCode /minutes-* slash-command wrappers
 └── tests/integration/         # Integration tests (including real whisper tests)
 ```
 
@@ -361,7 +363,7 @@ node test/mcp_tools_test.mjs                        # 8 MCP integration tests
 - **Markdown + YAML frontmatter** for storage — universal, works with everything
 - **Structured extraction** — action items + decisions in frontmatter as queryable YAML
 - **No API keys needed** — Claude summarizes conversationally via MCP tools
-- **Live transcript** — per-utterance whisper → JSONL append with PidGuard flock for session exclusivity. Delta reads via line cursor or wall-clock duration. Optional WAV preservation for post-meeting reprocessing. Agent-agnostic: JSONL readable by any agent, MCP tools for Claude, CLAUDE.md context injection for Codex/Gemini.
+- **Live transcript** — per-utterance whisper → JSONL append with PidGuard flock for session exclusivity. Delta reads via line cursor or wall-clock duration. Optional WAV preservation for post-meeting reprocessing. Agent-agnostic: JSONL readable by any agent, MCP tools for Claude, CLAUDE.md context injection for Codex/Gemini/OpenCode.
 
 ## Key Patterns
 
@@ -399,6 +401,6 @@ node test/mcp_tools_test.mjs                        # 8 MCP integration tests
 - **Conversational summarization**: Claude reads transcripts via MCP, no API key needed
 - **Auto-tagging + alerts**: PostToolUse hook tags meetings with git repo, checks for decision conflicts, surfaces overdue action items, nudges `/minutes-debrief` + `/minutes-tag`
 - **Proactive reminders**: SessionStart hook checks calendar for upcoming meetings and recommends `/minutes-brief` (fast) or `/minutes-prep` (goal-setting) based on time-to-meeting
-- **Agent-agnostic skills**: `.agents/skills/minutes/` mirrors all 18 skills for Codex, Gemini, and other agents. Uses `$MINUTES_SKILLS_ROOT` instead of `${CLAUDE_PLUGIN_ROOT}`, CLI-only speaker confirmation (no desktop app references). Runtime hooks at `_runtime/hooks/lib/` must stay in sync with `.claude/plugins/minutes/hooks/lib/`.
+- **Portable skills**: `.agents/skills/minutes/` mirrors all 18 skills for Codex, Gemini, and other AGENTS-aware agents, while `.opencode/skills/` + `.opencode/commands/` gives OpenCode native skill discovery and `/minutes-*` slash commands. Both use `$MINUTES_SKILLS_ROOT` instead of `${CLAUDE_PLUGIN_ROOT}` and keep CLI-only speaker confirmation (no desktop app references). Runtime helpers at `_runtime/hooks/lib/` must stay in sync with `.claude/plugins/minutes/hooks/lib/`.
 - **Desktop assistant**: Tauri AI Assistant is a singleton session that can switch focus into a selected meeting without spawning parallel assistant workspaces
 - **Live coaching**: Tauri Live Mode toggle starts real-time transcription; the assistant workspace `CLAUDE.md` auto-updates so the connected Recall session, Claude Desktop/Code, or any other agent can read the live JSONL file and coach mid-meeting. There is no dedicated transcript/coaching panel in Tauri v1; the coaching happens through the assistant chat surface.

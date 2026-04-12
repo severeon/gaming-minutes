@@ -1,4 +1,4 @@
-export type HostName = "claude" | "codex";
+export type HostName = "claude" | "codex" | "opencode";
 
 export interface HostOverride {
   description_override?: string;

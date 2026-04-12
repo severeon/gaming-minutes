@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "compile": "node dist/compiler/compile.js",
-    "compile:dry": "node dist/compiler/compile.js --dry-run --host claude --host codex",
+    "compile:dry": "node dist/compiler/compile.js --dry-run --host claude --host codex --host opencode",
     "check": "node dist/compiler/check.js",
     "golden": "node dist/compiler/golden.js",
     "golden:write": "node dist/compiler/golden.js --write",

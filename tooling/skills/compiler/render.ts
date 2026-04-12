@@ -32,8 +32,36 @@ function rewriteCodexPluginPaths(body: string, skill: CanonicalSkillSource): str
 }
 
 function rewriteSkillScopedAssetPaths(body: string, skill: CanonicalSkillSource, host: HostConfig): string {
-  if (host.name !== "codex") return body;
+  if (host.name !== "codex" && host.name !== "opencode") return body;
   return rewriteCodexPluginPaths(body, skill);
+}
+
+function appendFrontmatterField(
+  lines: string[],
+  key: string,
+  value: unknown,
+  indent = 0,
+): void {
+  const prefix = " ".repeat(indent);
+  if (value === null || value === undefined) return;
+
+  if (Array.isArray(value)) {
+    lines.push(`${prefix}${key}:`);
+    for (const item of value) {
+      lines.push(`${prefix}  - ${String(item)}`);
+    }
+    return;
+  }
+
+  if (typeof value === "object") {
+    lines.push(`${prefix}${key}:`);
+    for (const [nestedKey, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+      appendFrontmatterField(lines, nestedKey, nestedValue, indent + 2);
+    }
+    return;
+  }
+
+  lines.push(`${prefix}${key}: ${String(value)}`);
 }
 
 function overflowDescription(description: string, host: HostConfig): string {
@@ -57,6 +85,9 @@ function applyHostFrontmatter(
     host,
   );
   const lines = [`---`, `name: ${skill.frontmatter.name}`, `description: ${description}`];
+  for (const [key, value] of Object.entries(host.frontmatterPolicy.extraFields ?? {})) {
+    appendFrontmatterField(lines, key, value);
+  }
   const userInvocable = skill.frontmatter.user_invocable;
   if (
     host.frontmatterPolicy.mode === "denylist" &&
@@ -81,12 +112,38 @@ function applyHostFrontmatter(
   return `${lines.join("\n")}\n\n`;
 }
 
-function makeOpenAIYaml(skillName: string, description: string): string {
-  return `interface:
-  display_name: ${JSON.stringify(skillName)}
-  short_description: ${JSON.stringify(description)}
-  default_prompt: ${JSON.stringify(`Use ${skillName} for this task.`)}
-`;
+function makeSkillRootNote(host: HostConfig, skillName: string): string {
+  const root =
+    host.name === "codex"
+      ? ".agents/skills/minutes"
+      : host.name === "opencode"
+        ? ".opencode/skills"
+        : null;
+  if (!root) return "";
+  return `## Skill Path\n\nBefore running helper scripts or opening bundled references, set:\n\n\`\`\`bash\nexport MINUTES_SKILLS_ROOT=\"$(git rev-parse --show-toplevel)/${root}\"\nexport MINUTES_SKILL_ROOT=\"$MINUTES_SKILLS_ROOT/${skillName}\"\n\`\`\`\n\n`;
+}
+
+function makeOpenCodeCommand(skill: CanonicalSkillSource, host: HostConfig): {
+  relativePath: string;
+  content: string;
+} | null {
+  if (host.name !== "opencode") return null;
+  const description = overflowDescription(skill.frontmatter.description, host);
+  return {
+    relativePath: path.join(".opencode", "commands", `${skill.frontmatter.name}.md`),
+    content: [
+      "---",
+      `description: ${description}`,
+      "---",
+      "",
+      `Load the \`${skill.frontmatter.name}\` skill and follow it exactly for this request.`,
+      "",
+      "User arguments: $ARGUMENTS",
+      "",
+      "If no arguments were provided, use the skill's normal no-argument/default flow instead of stopping to ask for input.",
+      "",
+    ].join("\n"),
+  };
 }
 
 export function renderSkillForHost(
@@ -132,26 +189,25 @@ export function renderSkillForHost(
         ]
       : [];
 
-  const codexNeedsSkillRootNote =
-    host.name === "codex" &&
+  const needsSkillRootNote =
+    (host.name === "codex" || host.name === "opencode") &&
     (assetFiles.length > 0 ||
       rewrittenBody.includes("$MINUTES_SKILL_ROOT") ||
       rewrittenBody.includes("$MINUTES_SKILLS_ROOT"));
 
-  const codexSkillRootNote =
-    codexNeedsSkillRootNote
-      ? `## Skill Path\n\nBefore running helper scripts or opening bundled references, set:\n\n\`\`\`bash\nexport MINUTES_SKILLS_ROOT=\"$(git rev-parse --show-toplevel)/.agents/skills/minutes\"\nexport MINUTES_SKILL_ROOT=\"$MINUTES_SKILLS_ROOT/${skill.frontmatter.name}\"\n\`\`\`\n\n`
-      : "";
+  const skillRootNote = needsSkillRootNote ? makeSkillRootNote(host, skill.frontmatter.name) : "";
 
   const body =
     host.transformPolicy.extraNotesPlacement === "prepend" && extraNotes
-      ? `${frontmatter}${codexSkillRootNote}${extraNotes}\n\n${rewrittenBody}\n`
+      ? `${frontmatter}${skillRootNote}${extraNotes}\n\n${rewrittenBody}\n`
       : host.transformPolicy.extraNotesPlacement === "append" && extraNotes
-        ? `${frontmatter}${codexSkillRootNote}${rewrittenBody}\n\n## Host Notes\n\n${extraNotes}\n`
-        : `${frontmatter}${codexSkillRootNote}${rewrittenBody}\n`;
+        ? `${frontmatter}${skillRootNote}${rewrittenBody}\n\n## Host Notes\n\n${extraNotes}\n`
+        : `${frontmatter}${skillRootNote}${rewrittenBody}\n`;
 
-  const sidecarFiles =
-    host.metadataPolicy.generateSidecar && host.metadataPolicy.format === "openai.yaml"
+  const openCodeCommand = makeOpenCodeCommand(skill, host);
+  const sidecarFiles = [
+    ...(
+      host.metadataPolicy.generateSidecar && host.metadataPolicy.format === "openai.yaml"
       ? [
           {
             relativePath: path.join(
@@ -176,7 +232,10 @@ export function renderSkillForHost(
             ].join("\n"),
           },
         ]
-      : [];
+      : []
+    ),
+    ...(openCodeCommand ? [openCodeCommand] : []),
+  ];
 
   return {
     host: host.name,

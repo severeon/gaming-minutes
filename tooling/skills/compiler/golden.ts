@@ -47,7 +47,7 @@ async function main(): Promise<void> {
   const drifts: string[] = [];
 
   for (const skill of targets) {
-    for (const hostName of ["claude", "codex"] as const) {
+    for (const hostName of ["claude", "codex", "opencode"] as const) {
       const artifact = renderSkillForHost(skill, getHostConfig(hostName));
       const bodyPath = path.join(goldenRoot, hostName, skill.id, "SKILL.md");
       if (await compareOrWriteSnapshot(bodyPath, artifact.body, writeMode)) {

@@ -203,6 +203,83 @@ pub fn valid_model(model: &str) -> bool {
     VALID_PARAKEET_MODELS.contains(&model)
 }
 
+// ── Word-to-sentence grouping ───────────────────────────────────
+
+#[cfg(feature = "parakeet")]
+use crate::transcribe::ParakeetCliSegment;
+
+#[cfg(feature = "parakeet")]
+const GAP_THRESHOLD_SECS: f64 = 0.8;
+#[cfg(feature = "parakeet")]
+const WORD_CAP: usize = 30;
+
+/// Group word-level parakeet segments into sentence-level segments.
+///
+/// Flush rules (evaluated after each word):
+/// 1. Punctuation flush — previous word ends with `.` `!` `?` `。` `！` `？`.
+/// 2. Gap flush — gap to next word exceeds `GAP_THRESHOLD_SECS`.
+/// 3. Word-cap flush — buffer reaches `WORD_CAP` words (runaway safety net).
+/// 4. Trailing flush — final word always flushes any remaining buffer.
+#[cfg(feature = "parakeet")]
+pub fn group_word_segments(words: &[ParakeetCliSegment]) -> Vec<ParakeetCliSegment> {
+    let mut grouped = Vec::new();
+    let mut current: Option<ParakeetCliSegment> = None;
+    let mut word_count: usize = 0;
+
+    for word in words {
+        // Multi-word segments (already grouped upstream) pass through as-is.
+        if word.text.chars().any(char::is_whitespace) {
+            if let Some(segment) = current.take() {
+                grouped.push(segment);
+                word_count = 0;
+            }
+            grouped.push(word.clone());
+            continue;
+        }
+
+        match current.as_mut() {
+            None => {
+                current = Some(word.clone());
+                word_count = 1;
+            }
+            Some(segment) => {
+                let gap = word.start_secs - segment.end_secs;
+                let ends_sentence = segment
+                    .text
+                    .chars()
+                    .last()
+                    .map(|c| matches!(c, '.' | '!' | '?' | '。' | '！' | '？'))
+                    .unwrap_or(false);
+
+                if gap > GAP_THRESHOLD_SECS || ends_sentence || word_count >= WORD_CAP {
+                    grouped.push(segment.clone());
+                    *segment = word.clone();
+                    word_count = 1;
+                } else {
+                    if !segment.text.is_empty() {
+                        segment.text.push(' ');
+                    }
+                    segment.text.push_str(&word.text);
+                    segment.end_secs = word.end_secs;
+                    segment.confidence = match (segment.confidence, word.confidence) {
+                        (Some(left), Some(right)) => Some((left + right) / 2.0),
+                        (Some(left), None) => Some(left),
+                        (None, Some(right)) => Some(right),
+                        (None, None) => None,
+                    };
+                    word_count += 1;
+                }
+            }
+        }
+    }
+
+    if let Some(segment) = current {
+        grouped.push(segment);
+    }
+
+    grouped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,6 +326,68 @@ mod tests {
         assert_eq!(
             metadata.tokenizer_file.filename,
             "tdt-ctc-110m.tokenizer.vocab"
+        );
+    }
+
+    #[cfg(feature = "parakeet")]
+    fn seg(text: &str, start: f64, end: f64) -> ParakeetCliSegment {
+        ParakeetCliSegment {
+            text: text.into(),
+            start_secs: start,
+            end_secs: end,
+            confidence: None,
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn punctuation_flush_breaks_on_terminator() {
+        let words = vec![
+            seg("Hello", 0.0, 0.4),
+            seg("world.", 0.4, 0.9),
+            seg("Again", 0.9, 1.3),
+        ];
+        let grouped = group_word_segments(&words);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].text, "Hello world.");
+        assert_eq!(grouped[1].text, "Again");
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn gap_flush_breaks_on_long_pause() {
+        let words = vec![
+            seg("one", 0.0, 0.3),
+            seg("two", 1.2, 1.5), // 0.9s gap > 0.8s threshold
+            seg("three", 62.0, 62.3),
+        ];
+        let grouped = group_word_segments(&words);
+        assert_eq!(grouped.len(), 3);
+        assert_eq!(grouped[0].text, "one");
+        assert_eq!(grouped[1].text, "two");
+        assert_eq!(grouped[2].text, "three");
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn trailing_flush_emits_final_segment() {
+        let words = vec![seg("solitary", 5.0, 5.4)];
+        let grouped = group_word_segments(&words);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].text, "solitary");
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn word_cap_flush_prevents_runaway() {
+        let words: Vec<_> = (0..35)
+            .map(|i| seg("word", i as f64 * 0.1, i as f64 * 0.1 + 0.08))
+            .collect();
+        let grouped = group_word_segments(&words);
+        assert!(
+            grouped.len() >= 2,
+            "30-word cap should split into multiple segments: got {}",
+            grouped.len()
         );
     }
 }

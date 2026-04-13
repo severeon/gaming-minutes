@@ -1718,61 +1718,7 @@ pub struct ParakeetWarmupStats {
     pub used_gpu: bool,
 }
 
-#[cfg(feature = "parakeet")]
-fn group_parakeet_word_segments(words: &[ParakeetCliSegment]) -> Vec<ParakeetCliSegment> {
-    const GAP_THRESHOLD_SECS: f64 = 0.8;
-
-    let mut grouped = Vec::new();
-    let mut current: Option<ParakeetCliSegment> = None;
-
-    for word in words {
-        if word.text.chars().any(char::is_whitespace) {
-            if let Some(segment) = current.take() {
-                grouped.push(segment);
-            }
-            grouped.push(word.clone());
-            continue;
-        }
-
-        match current.as_mut() {
-            None => {
-                current = Some(word.clone());
-            }
-            Some(segment) => {
-                let gap = word.start_secs - segment.end_secs;
-                let ends_sentence = segment
-                    .text
-                    .chars()
-                    .last()
-                    .map(|c| matches!(c, '.' | '!' | '?' | '。' | '！' | '？'))
-                    .unwrap_or(false);
-
-                if gap > GAP_THRESHOLD_SECS || ends_sentence {
-                    grouped.push(segment.clone());
-                    current = Some(word.clone());
-                } else {
-                    if !segment.text.is_empty() {
-                        segment.text.push(' ');
-                    }
-                    segment.text.push_str(&word.text);
-                    segment.end_secs = word.end_secs;
-                    segment.confidence = match (segment.confidence, word.confidence) {
-                        (Some(left), Some(right)) => Some((left + right) / 2.0),
-                        (Some(left), None) => Some(left),
-                        (None, Some(right)) => Some(right),
-                        (None, None) => None,
-                    };
-                }
-            }
-        }
-    }
-
-    if let Some(segment) = current {
-        grouped.push(segment);
-    }
-
-    grouped
-}
+// Word-to-sentence grouping is in crate::parakeet::group_word_segments
 
 #[cfg(feature = "parakeet")]
 pub fn run_parakeet_cli_structured(
@@ -1897,7 +1843,7 @@ fn parse_parakeet_output(
         // Non-timestamp line — skip (don't fake [0:00] timestamps)
     }
 
-    let segments = group_parakeet_word_segments(&segments);
+    let segments = crate::parakeet::group_word_segments(&segments);
     let lines: Vec<String> = segments
         .iter()
         .map(|segment| {

@@ -2,7 +2,8 @@
 
 use minutes_core::Config;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -320,29 +321,59 @@ fn show_meeting_prompt(app: &tauri::AppHandle, event: &minutes_core::calendar::C
         win.close().ok();
     }
 
-    // Encode event data in URL fragment: title|minutesUntil|url
-    let url_part = event.url.as_deref().unwrap_or("");
-    let fragment = format!(
-        "{}|{}|{}",
-        event.title.replace('|', " "),
-        event.minutes_until,
-        url_part
-    );
-    let encoded = fragment
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || "-._~ |/".contains(c) {
-                c.to_string()
-            } else {
-                format!("%{:02X}", c as u32)
+    // Stage the payload keyed by a monotonic token. The overlay reads its
+    // token from the URL query string and calls `cmd_get_meeting_prompt` to
+    // drain exactly its own entry. Keying avoids a race where back-to-back
+    // `show_meeting_prompt` calls (two meetings firing in the same
+    // `refresh_calendar_items` tick) would let the first overlay's still-in-
+    // flight JS consume the second's payload.
+    //
+    // Why a query string, not a fragment: the previous fragment-based
+    // approach tripped over Tauri's URL normalizer double-encoding percent
+    // sequences (space → `%20` → `%2520`), so titles with spaces rendered as
+    // `X1%20payout`. A bare u64 token has no characters that need encoding.
+    static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let token = TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    let Some(state) = app.try_state::<commands::AppState>() else {
+        eprintln!("[calendar] AppState missing; skipping meeting prompt");
+        return;
+    };
+    match state.pending_meeting_prompts.lock() {
+        Ok(mut map) => {
+            // Cap the map to bound memory if some overlay's JS never
+            // consumes (e.g. window build failed below, or webview crashed
+            // before invoke). Evict lowest token IDs first — they're oldest.
+            const MAX_PENDING: usize = 16;
+            while map.len() >= MAX_PENDING {
+                if let Some(&oldest) = map.keys().min() {
+                    map.remove(&oldest);
+                } else {
+                    break;
+                }
             }
-        })
-        .collect::<String>();
-    let url = format!("meeting-prompt.html#{}", encoded);
+            map.insert(
+                token,
+                commands::MeetingPromptData {
+                    title: event.title.clone(),
+                    minutes_until: event.minutes_until,
+                    url: event.url.clone().filter(|u| !u.is_empty()),
+                },
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "[calendar] pending_meeting_prompts mutex poisoned, skipping stage: {}",
+                e
+            );
+            return;
+        }
+    }
 
     // Position: top-right of main screen, below menu bar
     let (pos_x, pos_y) = get_top_right_position(380.0, 190.0);
 
+    let url = format!("meeting-prompt.html?t={}", token);
     match WebviewWindowBuilder::new(app, "meeting-prompt", WebviewUrl::App(url.into()))
         .title("Upcoming Meeting")
         .inner_size(380.0, 190.0)
@@ -356,7 +387,14 @@ fn show_meeting_prompt(app: &tauri::AppHandle, event: &minutes_core::calendar::C
         .build()
     {
         Ok(_) => eprintln!("[calendar] meeting prompt shown for: {}", event.title),
-        Err(e) => eprintln!("[calendar] failed to show meeting prompt: {}", e),
+        Err(e) => {
+            eprintln!("[calendar] failed to show meeting prompt: {}", e);
+            // Window never opened, so no JS will consume the entry. Drop it
+            // now rather than waiting for the MAX_PENDING eviction.
+            if let Ok(mut map) = state.pending_meeting_prompts.lock() {
+                map.remove(&token);
+            }
+        }
     }
 }
 
@@ -736,6 +774,7 @@ fn main() {
             palette_shortcut: palette_shortcut.clone(),
             palette_lifecycle: palette_lifecycle.clone(),
             palette_reopen_pending: palette_reopen_pending.clone(),
+            pending_meeting_prompts: Arc::new(Mutex::new(HashMap::new())),
         })
         .manage(Arc::new(Mutex::new(
             shortcut_manager::ShortcutManager::new(),
@@ -1422,6 +1461,7 @@ fn main() {
             commands::cmd_vault_setup,
             commands::cmd_vault_unlink,
             commands::cmd_open_meeting_url,
+            commands::cmd_get_meeting_prompt,
             commands::cmd_start_dictation,
             commands::cmd_stop_dictation,
             commands::cmd_enable_dictation_hotkey,

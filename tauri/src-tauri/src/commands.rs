@@ -4,6 +4,7 @@ use minutes_core::config::VALID_PARAKEET_MODELS;
 use minutes_core::{CaptureMode, Config, ContentType};
 use std::cmp::Reverse;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::path::PathBuf;
@@ -52,6 +53,12 @@ pub struct AppState {
     /// Set when a hotkey press lands in the `Closing` state. The close path
     /// drains this flag on completion and re-opens the palette if it was set.
     pub palette_reopen_pending: Arc<AtomicBool>,
+    /// Staged payloads for meeting-prompt overlays, keyed by an opaque token
+    /// passed via URL query (`?t=<token>`). Each overlay consumes exactly one
+    /// entry on load. Keyed rather than single-slot to avoid a race when a
+    /// second prompt fires before the first overlay's JS has consumed its
+    /// payload — see `show_meeting_prompt` in main.rs.
+    pub pending_meeting_prompts: Arc<Mutex<HashMap<u64, MeetingPromptData>>>,
 }
 
 type ParakeetStatusView = minutes_core::transcription_coordinator::ParakeetBackendStatus;
@@ -83,6 +90,33 @@ pub enum PaletteLifecycle {
 pub struct PendingUpdate {
     pub version: String,
     pub body: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingPromptData {
+    pub title: String,
+    pub minutes_until: i64,
+    pub url: Option<String>,
+}
+
+/// Returns the pending meeting-prompt payload for the given token (and clears
+/// it). Called by the overlay window on load. Returning `None` means the
+/// token was already consumed, the staging path failed, or the window was
+/// opened without a matching token — the overlay should close rather than
+/// render a phantom "Meeting" prompt with no context.
+#[tauri::command]
+pub fn cmd_get_meeting_prompt(
+    token: u64,
+    state: tauri::State<'_, AppState>,
+) -> Option<MeetingPromptData> {
+    match state.pending_meeting_prompts.lock() {
+        Ok(mut map) => map.remove(&token),
+        Err(e) => {
+            eprintln!("[calendar] pending_meeting_prompts mutex poisoned: {}", e);
+            None
+        }
+    }
 }
 
 /// Surface a deferred update notification if one is pending and no session is active.

@@ -312,18 +312,12 @@
   <div class="toast" id="toast">Recording started ✓</div>
 
   <script>
-    const invoke = window.__TAURI__?.core?.invoke || (async () => {});
+    const invoke = window.__TAURI__?.core?.invoke || (async () => null);
     const getCurrentWebviewWindow =
       window.__TAURI__?.webviewWindow?.getCurrentWebviewWindow ||
       (() => ({ close: () => window.close() }));
 
-    // Parse event data from URL fragment: title|minutesUntil|url
-    const fragment = decodeURIComponent(window.location.hash.slice(1));
-    const [title, minutesStr, meetingUrl] = fragment.split('|');
-    const minutesUntil = parseInt(minutesStr, 10) || 0;
-    const hasUrl = meetingUrl && meetingUrl.length > 0 && meetingUrl !== 'undefined';
-
-    // Set content
+    // Element refs
     const titleEl = document.getElementById('title');
     const countdownEl = document.getElementById('countdown');
     const primaryBtn = document.getElementById('primary-btn');
@@ -331,25 +325,76 @@
     const toast = document.getElementById('toast');
     const summaryEl = document.getElementById('summary');
 
-    titleEl.textContent = title || 'Meeting';
-    titleEl.title = title || 'Meeting'; // full text on hover
+    // Populated from cmd_get_meeting_prompt below
+    let title = 'Meeting';
+    let minutesUntil = 0;
+    let meetingUrl = '';
+    let hasUrl = false;
 
-    if (minutesUntil <= 0) {
-      countdownEl.textContent = 'starting now';
-      countdownEl.classList.add('urgent');
-    } else if (minutesUntil === 1) {
-      countdownEl.textContent = 'in 1 minute';
-    } else {
-      countdownEl.textContent = `in ${minutesUntil} minutes`;
+    function renderFromState() {
+      titleEl.textContent = title || 'Meeting';
+      titleEl.title = title || 'Meeting'; // full text on hover
+
+      if (minutesUntil <= 0) {
+        countdownEl.textContent = 'starting now';
+        countdownEl.classList.add('urgent');
+      } else if (minutesUntil === 1) {
+        countdownEl.textContent = 'in 1 minute';
+      } else {
+        countdownEl.textContent = `in ${minutesUntil} minutes`;
+      }
+
+      primaryBtn.textContent = hasUrl ? 'Join & Record' : 'Record';
+      summaryEl.textContent = hasUrl
+        ? 'Minutes can open the meeting link and start a local recording before the conversation gets away from you.'
+        : 'Minutes can start a local recording now so the transcript, decisions, and action items are captured from the beginning.';
     }
 
-    primaryBtn.textContent = hasUrl ? 'Join & Record' : 'Record';
-    summaryEl.textContent = hasUrl
-      ? 'Minutes can open the meeting link and start a local recording before the conversation gets away from you.'
-      : 'Minutes can start a local recording now so the transcript, decisions, and action items are captured from the beginning.';
+    function closeWindow() {
+      try { getCurrentWebviewWindow().close(); } catch { window.close(); }
+    }
 
-    // Auto-focus primary button
-    primaryBtn.focus();
+    (async () => {
+      // Parse the staging token. The overlay is only meaningful if it was
+      // opened by show_meeting_prompt with a token; otherwise we have no
+      // meeting context to render and should quietly close rather than show
+      // a phantom "Meeting · starting now · Record" overlay.
+      const tokenStr = new URLSearchParams(window.location.search).get('t');
+      const token = tokenStr === null ? NaN : Number(tokenStr);
+      if (!Number.isFinite(token)) {
+        console.warn('meeting-prompt opened without staging token; closing');
+        closeWindow();
+        return;
+      }
+
+      let data = null;
+      try {
+        data = await invoke('cmd_get_meeting_prompt', { token });
+      } catch (e) {
+        // IPC itself failed (command not registered, state missing, etc.).
+        // This is operator-visible in devtools/stderr; for the user, close
+        // silently rather than render a context-free overlay.
+        console.warn('cmd_get_meeting_prompt failed:', e);
+        closeWindow();
+        return;
+      }
+
+      if (!data) {
+        // Token was already drained (rapid-reopen race) or never staged.
+        // Either way the overlay has nothing to show — close it.
+        console.warn('meeting-prompt token', token, 'returned no data; closing');
+        closeWindow();
+        return;
+      }
+
+      title = data.title ?? 'Meeting';
+      minutesUntil = Number.isFinite(data.minutesUntil) ? data.minutesUntil : 0;
+      meetingUrl = typeof data.url === 'string' ? data.url : '';
+      hasUrl = meetingUrl.length > 0;
+
+      renderFromState();
+      primaryBtn.focus();
+    })();
 
     // Actions
     async function startRecording() {

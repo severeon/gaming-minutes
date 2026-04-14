@@ -156,7 +156,7 @@ Text streams progressively as you speak (partial results every 2 seconds). By de
 ### Command palette (desktop app)
 Press `⌘⇧K` from anywhere on macOS to open a keyboard-first palette of every Minutes command. Start a recording, drop a note into the active session, jump to the latest meeting, search transcripts, or rename the meeting open in your assistant — all without leaving the keyboard. Backed by a single typed command registry in `minutes-core`, so visibility follows real backend state: stop-recording only appears while you're recording, mid-recording dictation rows are hidden, and the list re-fetches automatically when state changes.
 
-Recents float to the top with their original payload intact (re-running a `Search transcripts: pricing` from history skips the retype). The shortcut defaults on for both fresh installs and upgrades, with a one-time macOS notification on first launch announcing the binding. Disable it from the Settings overlay (Command Palette section) or by setting `[palette] shortcut_enabled = false` in `~/.config/minutes/config.toml`. The Settings dropdown also offers `⌘⇧O` and `⌘⇧U` if `⌘⇧K` collides with your IDE.
+Recents float to the top with their original payload intact (re-running a `Search transcripts: pricing` from history skips the retype). The shortcut defaults on for both fresh installs and upgrades, with a one-time macOS notification on first launch announcing the binding. Disable it from the Settings overlay (Command Palette section) or by setting `[palette] shortcut_enabled = false` in your config file (`$XDG_CONFIG_HOME/minutes/config.toml` when `XDG_CONFIG_HOME` is set, otherwise `~/.config/minutes/config.toml`). The Settings dropdown also offers `⌘⇧O` and `⌘⇧U` if `⌘⇧K` collides with your IDE.
 
 ### Try it without a mic
 ```bash
@@ -270,7 +270,7 @@ mkdir -p ~/Google\ Drive/minutes-inbox
 # ~/.minutes/inbox/  ← already exists
 ```
 
-**Step 2: Add the sync folder to your watch config** in `~/.config/minutes/config.toml`:
+**Step 2: Add the sync folder to your watch config** in your config file (`$XDG_CONFIG_HOME/minutes/config.toml` when `XDG_CONFIG_HOME` is set, otherwise `~/.config/minutes/config.toml`):
 
 ```toml
 [watch]
@@ -834,7 +834,8 @@ Only **High**-confidence attributions rewrite transcript labels. Medium/Low are 
 
 ```bash
 # Set your name (required for Levels 0-2)
-# In ~/.config/minutes/config.toml:
+# In your config file (`$XDG_CONFIG_HOME/minutes/config.toml` when set,
+# otherwise `~/.config/minutes/config.toml`):
 [identity]
 name = "Your Name"
 
@@ -960,7 +961,8 @@ Check your current version with `minutes --version` (CLI) or the Settings gear i
 Optional — minutes works out of the box.
 
 ```toml
-# ~/.config/minutes/config.toml
+# By default: ~/.config/minutes/config.toml
+# Or: $XDG_CONFIG_HOME/minutes/config.toml when XDG_CONFIG_HOME is set
 
 [transcription]
 engine = "whisper"        # "whisper" (default) or "parakeet" (opt-in, lower WER)

@@ -2,7 +2,7 @@
 
 > Generated file. Do not edit by hand.
 > Source: crates/core thiserror definitions
-> Last generated: 2026-04-10
+> Last generated: 2026-04-14
 
 This is the generated public catalog of stable Minutes core errors. It intentionally favors actionable, user-facing errors over generic wrapper variants.
 
@@ -109,11 +109,7 @@ Reference URL: https://useminutes.app/docs/errors#error-captureerror-emptyrecord
 
 Exact message:
 
-> Whisper model not found. {0}
-> 
-> To fix this, run:
-> 
->     minutes setup --model tiny
+> Transcription model not found. {0}
 
 Source: `crates/core/src/error.rs`
 

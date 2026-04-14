@@ -3,7 +3,7 @@
 > Generated file. Do not edit by hand.
 > Source: manifest.json + crates/mcp/src/index.ts
 > Regenerate: node scripts/generate_llms_txt.mjs
-> Last generated: 2026-04-10
+> Last generated: 2026-04-14
 
 Minutes exposes 26 tools, 7 resources, and 6 prompt templates through the MCP server.
 

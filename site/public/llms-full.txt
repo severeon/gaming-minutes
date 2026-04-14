@@ -2,7 +2,7 @@
 
 > Generated file. Do not edit by hand.
 > Source: manifest.json + crates/mcp/src/index.ts
-> Last generated: 2026-04-10
+> Last generated: 2026-04-14
 
 ## Product
 
@@ -10,7 +10,13 @@ Minutes is conversation memory for AI. Record, transcribe, search, and query eve
 
 26 tools • 6 resources • Interactive MCP App dashboard • 6 prompt templates
 
-**Setup:** `npx minutes-mcp` is all you need to start. Search, browsing, and the dashboard work immediately with zero setup. For recording and transcription, the server auto-installs the CLI binary on first use (or install manually via `brew install silverstein/tap/minutes` or `cargo install minutes-cli`). Then run `minutes setup --model tiny` (75MB speech model) and optionally `minutes setup --diarization` (~34MB speaker ID models).
+**Setup:** `npx minutes-mcp` is all you need to start. Search, browsing, and the dashboard work immediately with zero setup. For recording and transcription, the server auto-installs the CLI binary on first use (or install manually via `brew install silverstein/tap/minutes` or `cargo install minutes-cli`). Then run `minutes setup --model tiny` for the smallest Whisper path, or `minutes setup --parakeet` for the multilingual Parakeet default introduced in v0.12.0.
+
+**What changed in v0.12.0:**
+• Parakeet is multilingual by default (`tdt-600m`) instead of English-only
+• Native Parakeet VAD replaces the old fixed 45-second slices when weights are present
+• Folder watcher batches Parakeet memo bursts
+• Optional fp16 and graph-derived vocabulary boosts are available for tuning
 
 **Record & Transcribe:**
 • Start/stop live meeting recordings
@@ -62,7 +68,7 @@ Minutes is conversation memory for AI. Record, transcribe, search, and query eve
 • Subscribable insight events for workflow automation
 • Structured YAML frontmatter on all output
 
-**Privacy:** All audio processing happens locally via whisper.cpp and pyannote-rs. No audio or transcripts are sent anywhere. Summarization is optional and uses your own LLM connection.
+**Privacy:** All audio processing happens locally via whisper.cpp (or parakeet.cpp) and pyannote-rs. No audio or transcripts are sent anywhere. Summarization is optional and uses your own LLM connection.
 
 ## Choose your surface
 

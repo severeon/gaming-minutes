@@ -233,6 +233,9 @@ export default function Home() {
         <p className="mb-5 font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--accent)]">
           Open-source conversation memory
         </p>
+        <p className="mx-auto mb-5 max-w-[720px] font-mono text-[12px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
+          v0.12.0 • 26 MCP tools • 44 CLI commands • 620 tests
+        </p>
         <h1 className="mx-auto max-w-[720px] font-serif text-[40px] leading-[0.98] tracking-[-0.045em] text-[var(--text)] sm:text-[58px]">
           Every meeting, memo, and voice note,
           <br />
@@ -276,6 +279,14 @@ export default function Home() {
 
         <p className="mt-5 font-mono text-[12px] text-[var(--text-secondary)]">
           Local, open source, free forever.
+        </p>
+
+        <p className="mx-auto mt-4 max-w-[620px] text-[14px] leading-6 text-[var(--text-secondary)]">
+          v0.12.0 makes Parakeet multilingual by default. New installs use
+          <span className="mx-1 font-mono text-[var(--text)]">tdt-600m</span>
+          instead of the old English-only
+          <span className="mx-1 font-mono text-[var(--text)]">tdt-ctc-110m</span>,
+          with native VAD, watcher batching, and opt-in fp16 and vocabulary boosts.
         </p>
 
         <div className="mt-12">
@@ -335,7 +346,10 @@ export default function Home() {
         </div>
 
         <p className="mt-4 text-[13px] text-[var(--text-secondary)]">
-          Download, install, done. First launch downloads a speech model.
+          Download, install, done. First launch downloads a speech model. Existing
+          Parakeet users should run
+          <span className="mx-1 font-mono text-[var(--text)]">minutes setup --parakeet</span>
+          to fetch the new multilingual default, or pin the old 110m model in config.
         </p>
 
         <div className="mt-8 flex flex-wrap justify-center gap-3">
@@ -380,10 +394,11 @@ export default function Home() {
                                 Ollama`}
         </pre>
         <p className="mt-5 max-w-[660px] text-[15px] leading-7 text-[var(--text-secondary)]">
-          Transcription is local via whisper.cpp with GPU acceleration.
-          Summarization is optional. Claude can do it conversationally when you
-          ask, using your existing subscription. No API keys are required to get
-          useful output.
+          Transcription is local via whisper.cpp or parakeet.cpp. In v0.12.0,
+          Parakeet is multilingual by default and uses native VAD to avoid the
+          old fixed 45-second slices. Summarization is optional. Claude can do
+          it conversationally when you ask, using your existing subscription.
+          No API keys are required to get useful output.
         </p>
       </section>
 

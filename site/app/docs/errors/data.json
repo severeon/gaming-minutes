@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-10",
+  "generatedAt": "2026-04-14",
   "visibleCount": 49,
   "hiddenCount": 15,
   "groups": [
@@ -95,7 +95,7 @@
           "enumName": "TranscribeError",
           "variant": "ModelNotFound",
           "cfg": null,
-          "message": "Whisper model not found. {0}\n\nTo fix this, run:\n\n    minutes setup --model tiny",
+          "message": "Transcription model not found. {0}",
           "sourceFile": "crates/core/src/error.rs",
           "hidden": false,
           "anchorId": "error-transcribeerror-modelnotfound",

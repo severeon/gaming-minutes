@@ -3187,11 +3187,16 @@
     /* ── Update available banner ── */
     .update-banner {
       display: none;
-      align-items: center;
-      gap: 12px;
+      align-items: stretch;
       padding: 10px 16px;
       background: var(--green-tint-soft);
       border-bottom: 1px solid var(--green-border);
+    }
+
+    .update-banner.error-state {
+      background: var(--red-bg);
+      border-bottom-color: var(--red-border-strong);
+      box-shadow: inset 0 1px 0 var(--red-border-stronger);
     }
 
     .update-banner.active {
@@ -3204,6 +3209,34 @@
       min-width: 0;
     }
 
+    .update-banner-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .update-banner-phase {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .update-banner-spinner {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      border: 2px solid color-mix(in srgb, var(--text-secondary) 25%, transparent);
+      border-top-color: var(--text-secondary);
+      animation: processing-spin 0.9s linear infinite;
+      flex-shrink: 0;
+      display: none;
+    }
+
+    .update-banner-spinner.active {
+      display: inline-block;
+    }
+
     .update-banner-title {
       font-size: 12px;
       font-weight: 600;
@@ -3213,7 +3246,76 @@
     .update-banner-sub {
       font-size: 11px;
       color: var(--text-secondary);
-      margin-top: 2px;
+      margin-top: 4px;
+      line-height: 1.45;
+    }
+
+    .update-banner-meta {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+      display: none;
+    }
+
+    .update-banner-meta.active {
+      display: block;
+    }
+
+    .update-banner-progress {
+      display: none;
+      margin-top: 8px;
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--bg-elevated);
+      overflow: hidden;
+    }
+
+    .update-banner-progress.active {
+      display: block;
+    }
+
+    .update-banner-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--text-secondary);
+      transition: width 120ms linear;
+    }
+
+    .update-banner-error {
+      display: none;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--red);
+      line-height: 1.4;
+      font-weight: 600;
+    }
+
+    .update-banner-error.active {
+      display: block;
+    }
+
+    .update-banner-debug {
+      display: none;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .update-banner-debug.active {
+      display: flex;
+    }
+
+    .update-banner.error-state .update-banner-title {
+      color: var(--red);
+    }
+
+    .update-banner.error-state .update-banner-sub {
+      color: var(--text);
+    }
+
+    .update-banner.error-state .update-banner-meta {
+      color: var(--red);
     }
 
     .update-banner-actions {
@@ -3664,12 +3766,32 @@
     <!-- Update available banner -->
     <div class="update-banner" id="update-banner">
       <div class="update-banner-info">
-        <div class="update-banner-title" id="update-banner-title">Update available</div>
+        <div class="update-banner-row">
+          <div class="update-banner-phase">
+            <span class="update-banner-spinner" id="update-banner-spinner" aria-hidden="true"></span>
+            <div class="update-banner-title" id="update-banner-title">Update available</div>
+          </div>
+          <div class="update-banner-actions">
+            <button class="btn btn-primary btn-sm" id="btn-start-update">Update now</button>
+            <button class="btn btn-primary btn-sm" id="btn-retry-update" hidden>Retry</button>
+            <button class="btn btn-secondary btn-sm" id="btn-cancel-update" hidden>Cancel</button>
+            <button class="btn btn-secondary btn-sm" id="btn-dismiss-update">Later</button>
+          </div>
+        </div>
         <div class="update-banner-sub" id="update-banner-sub">A new version is ready to install</div>
-      </div>
-      <div class="update-banner-actions">
-        <button class="btn btn-primary btn-sm" id="btn-restart-update">Restart Now</button>
-        <button class="btn btn-secondary btn-sm" id="btn-dismiss-update">Later</button>
+        <div class="update-banner-meta" id="update-banner-meta"></div>
+        <div class="update-banner-progress" id="update-banner-progress">
+          <div class="update-banner-progress-fill" id="update-banner-progress-fill"></div>
+        </div>
+        <div class="update-banner-error" id="update-banner-error"></div>
+        <div class="update-banner-debug" id="update-banner-debug">
+          <button class="btn btn-secondary btn-sm" data-update-debug="checking">Checking</button>
+          <button class="btn btn-secondary btn-sm" data-update-debug="downloading">Downloading</button>
+          <button class="btn btn-secondary btn-sm" data-update-debug="verifying">Verifying</button>
+          <button class="btn btn-secondary btn-sm" data-update-debug="installing">Installing</button>
+          <button class="btn btn-secondary btn-sm" data-update-debug="ready">Ready</button>
+          <button class="btn btn-secondary btn-sm" data-update-debug="error">Error</button>
+        </div>
       </div>
     </div>
 
@@ -3753,6 +3875,7 @@
             title="Start live transcription — ask your agent in Recall for coaching"
             aria-label="Start live transcription">Live</button>
           <button class="btn btn-secondary" id="btn-quick-thought">Quick Thought</button>
+          <button class="btn btn-secondary" id="btn-update-debug-launch" hidden>Update Debug</button>
           <button class="btn btn-secondary" id="btn-assistant" aria-expanded="false">Recall <span class="recall-nudge"
               id="recall-nudge" aria-label="Recall has new content"></span></button>
         </div>
@@ -4583,6 +4706,20 @@
     const quickThoughtButton = document.getElementById('btn-quick-thought');
     const openOutputFolderButton = document.getElementById('btn-open-output-folder');
     const aboutTrayCopy = document.getElementById('about-tray-copy');
+    const updateBanner = document.getElementById('update-banner');
+    const updateBannerTitle = document.getElementById('update-banner-title');
+    const updateBannerSub = document.getElementById('update-banner-sub');
+    const updateBannerMeta = document.getElementById('update-banner-meta');
+    const updateBannerSpinner = document.getElementById('update-banner-spinner');
+    const updateBannerProgress = document.getElementById('update-banner-progress');
+    const updateBannerProgressFill = document.getElementById('update-banner-progress-fill');
+    const updateBannerError = document.getElementById('update-banner-error');
+    const updateBannerDebug = document.getElementById('update-banner-debug');
+    const startUpdateButton = document.getElementById('btn-start-update');
+    const retryUpdateButton = document.getElementById('btn-retry-update');
+    const cancelUpdateButton = document.getElementById('btn-cancel-update');
+    const dismissUpdateButton = document.getElementById('btn-dismiss-update');
+    const updateDebugLaunchButton = document.getElementById('btn-update-debug-launch');
 
     let isRecording = false;
     let isProcessing = false;
@@ -4613,6 +4750,21 @@
     let pollInterval = null;
     let processingStartTime = null;
     let processingTimerInterval = null;
+    let updaterDebugEnabled = false;
+    let updateState = {
+      available: false,
+      version: null,
+      body: '',
+      downloadBytes: null,
+      phase: 'idle',
+      downloadedBytes: 0,
+      totalBytes: null,
+      bytesPerSec: null,
+      etaSeconds: null,
+      errorMessage: '',
+      recoverable: false,
+      canCancel: false,
+    };
     let desktopCapabilities = {
       platform: 'other',
       folderRevealLabel: 'Show in Folder',
@@ -5162,6 +5314,22 @@
         updateJobsChip(status.processingJobCount || 0);
         renderProcessingJobs(status.processingJobs || []);
         updateOutputNotice(status.latestOutput);
+        if (status.updateState && typeof status.updateState === 'object') {
+          const incoming = status.updateState;
+          if (incoming.phase && incoming.phase !== 'available') {
+            updateState = {
+              ...updateState,
+              ...incoming,
+              available: true,
+              body: updateState.body,
+              downloadBytes: incoming.totalBytes ?? updateState.downloadBytes,
+            };
+            renderUpdateBanner();
+          }
+        }
+        if (updateState.available || updateState.phase !== 'idle') {
+          renderUpdateBanner();
+        }
 
         if (isRecording) {
           statusPill.className = 'status-pill recording';
@@ -8336,54 +8504,275 @@
     });
 
     // ── Auto-update banner ──
-    const updateBanner = document.getElementById('update-banner');
-    function showUpdateBanner(version, body) {
-      if (!updateBanner) return;
-      const titleEl = document.getElementById('update-banner-title');
-      const subEl = document.getElementById('update-banner-sub');
-      if (titleEl) titleEl.textContent = 'Update available (v' + version + ')';
-      if (subEl) subEl.textContent =
-        body ? body.split('\n')[0].slice(0, 80) : 'A new version is ready to install';
-      updateBanner.classList.add('active');
+    function formatBytes(bytes) {
+      if (!Number.isFinite(bytes) || bytes <= 0) return '';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let value = bytes;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      const precision = value >= 10 || unit === 0 ? 0 : 1;
+      return `${value.toFixed(precision)} ${units[unit]}`;
     }
-    // Restore banner from localStorage if a pending update was stored,
-    // but only if the stored version is newer than the current app version
-    // (clears stale entries from a successfully applied update)
+
+    function formatEta(seconds) {
+      if (!Number.isFinite(seconds) || seconds <= 0) return '';
+      if (seconds >= 60) {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins}m ${String(secs).padStart(2, '0')}s left`;
+      }
+      return `${seconds}s left`;
+    }
+
+    function updatePreambleText() {
+      const version = updateState.version ? `v${updateState.version}` : 'the new version';
+      const size = updateState.totalBytes || updateState.downloadBytes;
+      const sizeText = size ? ` (${formatBytes(size)})` : '';
+      if (isRecording || isProcessing || isLiveTranscript) {
+        return `The app will download ${version}${sizeText}, verify the signature, and restart automatically once you finish the current session. Your current recording will be preserved.`;
+      }
+      return `The app will download ${version}${sizeText}, verify the signature, and restart automatically. Your current recording will be preserved.`;
+    }
+
+    function setButtonVisibility(button, visible, disabled = false) {
+      if (!button) return;
+      button.hidden = !visible;
+      button.disabled = disabled;
+    }
+
+    function renderUpdateBanner() {
+      if (!updateBanner) return;
+      const showBanner = updateState.available || ['checking', 'downloading', 'verifying', 'installing', 'ready', 'error'].includes(updateState.phase);
+      updateBanner.classList.toggle('active', showBanner);
+      if (!showBanner) return;
+
+      updateBanner.classList.toggle('error-state', updateState.phase === 'error');
+      const activeSpinner = ['checking', 'downloading', 'verifying', 'installing'].includes(updateState.phase);
+      updateBannerSpinner?.classList.toggle('active', activeSpinner);
+
+      let title = 'Update available';
+      let sub = updatePreambleText();
+      let meta = '';
+      let showMeta = false;
+      let showProgress = false;
+      let progressRatio = 0;
+
+      switch (updateState.phase) {
+        case 'checking':
+          title = 'Checking update';
+          sub = 'Confirming the latest release before download starts.';
+          break;
+        case 'downloading': {
+          title = 'Downloading update';
+          const total = updateState.totalBytes || updateState.downloadBytes;
+          sub = `Downloading v${updateState.version || 'latest'}${total ? ` (${formatBytes(total)})` : ''}.`;
+          const downloaded = formatBytes(updateState.downloadedBytes);
+          const totalText = total ? formatBytes(total) : 'unknown size';
+          const rate = updateState.bytesPerSec ? `${formatBytes(updateState.bytesPerSec)}/s` : '';
+          const eta = updateState.etaSeconds ? formatEta(updateState.etaSeconds) : '';
+          meta = [downloaded && total ? `${downloaded} / ${totalText}` : '', rate, eta].filter(Boolean).join(' · ');
+          showMeta = Boolean(meta);
+          showProgress = true;
+          progressRatio = total ? Math.min(1, updateState.downloadedBytes / total) : 0.1;
+          break;
+        }
+        case 'verifying':
+          title = 'Verifying update';
+          sub = `Checking the v${updateState.version || 'latest'} signature before install.`;
+          meta = updateState.totalBytes ? `${formatBytes(updateState.totalBytes)} downloaded` : '';
+          showMeta = Boolean(meta);
+          showProgress = true;
+          progressRatio = 1;
+          break;
+        case 'installing':
+          title = 'Installing update';
+          sub = `Installing v${updateState.version || 'latest'} and preparing restart.`;
+          meta = 'Cancel is disabled once install starts.';
+          showMeta = true;
+          showProgress = true;
+          progressRatio = 1;
+          break;
+        case 'ready':
+          title = 'Ready to restart';
+          sub = `v${updateState.version || 'latest'} is installed. Restarting automatically…`;
+          break;
+        case 'error':
+          title = '✗ Update failed';
+          sub = 'The update did not finish cleanly.';
+          break;
+        default:
+          title = updateState.version ? `Update available (v${updateState.version})` : 'Update available';
+          break;
+      }
+
+      if (updateBannerTitle) updateBannerTitle.textContent = title;
+      if (updateBannerSub) updateBannerSub.textContent = sub;
+      if (updateBannerMeta) {
+        updateBannerMeta.textContent = meta;
+        updateBannerMeta.classList.toggle('active', showMeta);
+      }
+      if (updateBannerProgress) updateBannerProgress.classList.toggle('active', showProgress);
+      if (updateBannerProgressFill) {
+        updateBannerProgressFill.style.width = `${Math.max(0, Math.min(100, progressRatio * 100))}%`;
+      }
+      if (updateBannerError) {
+        updateBannerError.textContent = updateState.phase === 'error' ? updateState.errorMessage || 'Update failed.' : '';
+        updateBannerError.classList.toggle('active', updateState.phase === 'error');
+      }
+
+      setButtonVisibility(startUpdateButton, updateState.phase === 'available');
+      setButtonVisibility(retryUpdateButton, updateState.phase === 'error' && updateState.recoverable);
+      setButtonVisibility(cancelUpdateButton, ['checking', 'downloading', 'verifying', 'installing'].includes(updateState.phase), !updateState.canCancel);
+      setButtonVisibility(dismissUpdateButton, updateState.phase === 'available' || updateState.phase === 'error');
+      if (dismissUpdateButton) dismissUpdateButton.textContent = updateState.phase === 'error' ? 'Cancel' : 'Later';
+    }
+
+    function resetUpdateState() {
+      updateState = {
+        available: false,
+        version: null,
+        body: '',
+        downloadBytes: null,
+        phase: 'idle',
+        downloadedBytes: 0,
+        totalBytes: null,
+        bytesPerSec: null,
+        etaSeconds: null,
+        errorMessage: '',
+        recoverable: false,
+        canCancel: false,
+      };
+      renderUpdateBanner();
+    }
+
+    function showUpdateBanner(version, body, downloadBytes) {
+      updateState = {
+        available: true,
+        version,
+        body: body || '',
+        downloadBytes: Number.isFinite(downloadBytes) ? downloadBytes : null,
+        phase: 'available',
+        downloadedBytes: 0,
+        totalBytes: Number.isFinite(downloadBytes) ? downloadBytes : null,
+        bytesPerSec: null,
+        etaSeconds: null,
+        errorMessage: '',
+        recoverable: false,
+        canCancel: false,
+      };
+      renderUpdateBanner();
+    }
+
+    async function startUpdateInstall() {
+      try {
+        await window.__TAURI__.core.invoke('cmd_install_update');
+      } catch (e) {
+        console.error('[updater] update start failed:', e);
+        updateState.phase = 'error';
+        updateState.errorMessage = String(e);
+        updateState.recoverable = true;
+        updateState.canCancel = false;
+        renderUpdateBanner();
+      }
+    }
+
+    async function cancelUpdateInstall() {
+      try {
+        await window.__TAURI__.core.invoke('cmd_cancel_update_install');
+      } catch (e) {
+        console.error('[updater] cancel failed:', e);
+      }
+    }
+
     try {
       const stored = localStorage.getItem('minutes-pending-update');
       if (stored) {
-        const { version, body } = JSON.parse(stored);
+        const { version, body, downloadBytes } = JSON.parse(stored);
         window.__TAURI__.app.getVersion().then(currentVersion => {
           if (version && version !== currentVersion) {
-            showUpdateBanner(version, body);
+            showUpdateBanner(version, body, downloadBytes);
           } else {
             localStorage.removeItem('minutes-pending-update');
           }
         }).catch(() => { });
       }
     } catch (_) { }
+
     currentWindow.listen('update-ready', (event) => {
-      const { version, body } = event.payload;
-      try { localStorage.setItem('minutes-pending-update', JSON.stringify({ version, body })); } catch (_) { }
-      showUpdateBanner(version, body);
-    });
-    document.getElementById('btn-restart-update').addEventListener('click', async () => {
-      const btn = document.getElementById('btn-restart-update');
-      btn.textContent = 'Updating...';
-      btn.disabled = true;
+      const { version, body, downloadBytes } = event.payload;
       try {
-        await window.__TAURI__.core.invoke('cmd_install_update');
-      } catch (e) {
-        console.error('[updater] update failed:', e);
-        btn.textContent = 'Restart Now';
-        btn.disabled = false;
-        const subEl = document.getElementById('update-banner-sub');
-        if (subEl) subEl.textContent = String(e);
-      }
+        localStorage.setItem('minutes-pending-update', JSON.stringify({ version, body, downloadBytes }));
+      } catch (_) { }
+      showUpdateBanner(version, body, downloadBytes);
     });
-    document.getElementById('btn-dismiss-update').addEventListener('click', () => {
-      if (updateBanner) updateBanner.classList.remove('active');
+
+    currentWindow.listen('update://phase', (event) => {
+      const payload = event.payload || {};
+      updateState.phase = payload.phase || updateState.phase;
+      updateState.version = payload.version || updateState.version;
+      updateState.totalBytes = Number.isFinite(payload.totalBytes) ? payload.totalBytes : updateState.totalBytes;
+      updateState.downloadBytes = updateState.totalBytes || updateState.downloadBytes;
+      updateState.downloadedBytes = Number.isFinite(payload.downloadedBytes) ? payload.downloadedBytes : updateState.downloadedBytes;
+      updateState.canCancel = !!payload.canCancel;
+      if (payload.phase === 'ready') {
+        try { localStorage.removeItem('minutes-pending-update'); } catch (_) { }
+      }
+      renderUpdateBanner();
+    });
+
+    currentWindow.listen('update://progress', (event) => {
+      const payload = event.payload || {};
+      updateState.phase = 'downloading';
+      updateState.downloadedBytes = Number.isFinite(payload.downloadedBytes) ? payload.downloadedBytes : updateState.downloadedBytes;
+      updateState.totalBytes = Number.isFinite(payload.totalBytes) ? payload.totalBytes : updateState.totalBytes;
+      updateState.downloadBytes = updateState.totalBytes || updateState.downloadBytes;
+      updateState.bytesPerSec = Number.isFinite(payload.bytesPerSec) ? payload.bytesPerSec : null;
+      updateState.etaSeconds = Number.isFinite(payload.etaSeconds) ? payload.etaSeconds : null;
+      updateState.canCancel = true;
+      renderUpdateBanner();
+    });
+
+    currentWindow.listen('update://error', (event) => {
+      const payload = event.payload || {};
+      updateState.phase = 'error';
+      updateState.errorMessage = payload.message || 'Update failed.';
+      updateState.recoverable = !!payload.recoverable;
+      updateState.canCancel = false;
+      renderUpdateBanner();
+    });
+
+    startUpdateButton.addEventListener('click', startUpdateInstall);
+    retryUpdateButton.addEventListener('click', startUpdateInstall);
+    cancelUpdateButton.addEventListener('click', cancelUpdateInstall);
+    dismissUpdateButton.addEventListener('click', () => {
+      resetUpdateState();
       try { localStorage.removeItem('minutes-pending-update'); } catch (_) { }
+    });
+
+    window.__minutesDebugSimulateUpdate = async (scenario) => {
+      try {
+        await invoke('cmd_debug_simulate_update', { scenario });
+      } catch (e) {
+        console.error('[updater] debug simulation failed:', e);
+      }
+    };
+
+    window.__TAURI__.app.getName?.().then((name) => {
+      updaterDebugEnabled = typeof name === 'string' && name.includes('Dev');
+      if (updateBannerDebug) updateBannerDebug.classList.toggle('active', updaterDebugEnabled);
+      if (updateDebugLaunchButton) updateDebugLaunchButton.hidden = !updaterDebugEnabled;
+    }).catch(() => { });
+
+    document.querySelectorAll('[data-update-debug]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await window.__minutesDebugSimulateUpdate(button.dataset.updateDebug);
+      });
+    });
+    updateDebugLaunchButton?.addEventListener('click', () => {
+      showUpdateBanner('0.12.0', '', 48 * 1024 * 1024);
     });
 
     // ── What's New modal (shown once after update) ──

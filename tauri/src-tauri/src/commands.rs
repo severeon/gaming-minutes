@@ -1,7 +1,11 @@
 use crate::call_capture;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use futures_util::StreamExt;
+use minisign_verify::{PublicKey, Signature};
 use minutes_core::capture::RecordingIntent;
 use minutes_core::config::VALID_PARAKEET_MODELS;
 use minutes_core::{CaptureMode, Config, ContentType};
+use reqwest::header::{ACCEPT, CONTENT_LENGTH};
 use std::cmp::Reverse;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -41,6 +45,9 @@ pub struct AppState {
     pub live_shortcut_enabled: Arc<AtomicBool>,
     pub live_shortcut: Arc<Mutex<String>>,
     pub pending_update: Arc<Mutex<Option<PendingUpdate>>>,
+    pub update_install_running: Arc<AtomicBool>,
+    pub update_install_cancel: Arc<AtomicBool>,
+    pub update_install_state: Arc<Mutex<UpdateUiState>>,
     /// Whether the palette global shortcut is currently registered.
     pub palette_shortcut_enabled: Arc<AtomicBool>,
     /// The shortcut string registered for the palette (e.g. "CmdOrCtrl+Shift+K").
@@ -90,6 +97,178 @@ pub enum PaletteLifecycle {
 pub struct PendingUpdate {
     pub version: String,
     pub body: String,
+    pub download_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+enum UpdatePhase {
+    Available,
+    Checking,
+    Downloading,
+    Verifying,
+    Installing,
+    Ready,
+    Error,
+}
+
+impl UpdatePhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Checking => "checking",
+            Self::Downloading => "downloading",
+            Self::Verifying => "verifying",
+            Self::Installing => "installing",
+            Self::Ready => "ready",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateUiState {
+    phase: UpdatePhase,
+    version: Option<String>,
+    total_bytes: Option<u64>,
+    downloaded_bytes: u64,
+    bytes_per_sec: Option<f64>,
+    eta_seconds: Option<u64>,
+    error_message: Option<String>,
+    recoverable: bool,
+    can_cancel: bool,
+}
+
+impl Default for UpdateUiState {
+    fn default() -> Self {
+        Self {
+            phase: UpdatePhase::Available,
+            version: None,
+            total_bytes: None,
+            downloaded_bytes: 0,
+            bytes_per_sec: None,
+            eta_seconds: None,
+            error_message: None,
+            recoverable: false,
+            can_cancel: false,
+        }
+    }
+}
+
+impl UpdateUiState {
+    fn available(version: impl Into<String>, total_bytes: Option<u64>) -> Self {
+        Self {
+            phase: UpdatePhase::Available,
+            version: Some(version.into()),
+            total_bytes,
+            ..Self::default()
+        }
+    }
+
+    fn checking(&self) -> Self {
+        Self {
+            phase: UpdatePhase::Checking,
+            version: self.version.clone(),
+            total_bytes: self.total_bytes,
+            can_cancel: true,
+            ..Self::default()
+        }
+    }
+
+    fn downloading(&self, total_bytes: Option<u64>) -> Self {
+        Self {
+            phase: UpdatePhase::Downloading,
+            version: self.version.clone(),
+            total_bytes,
+            can_cancel: true,
+            ..Self::default()
+        }
+    }
+
+    fn with_progress(
+        &self,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+        bytes_per_sec: Option<f64>,
+        eta_seconds: Option<u64>,
+    ) -> Self {
+        Self {
+            phase: UpdatePhase::Downloading,
+            version: self.version.clone(),
+            total_bytes,
+            downloaded_bytes,
+            bytes_per_sec,
+            eta_seconds,
+            can_cancel: true,
+            ..Self::default()
+        }
+    }
+
+    fn verifying(&self, downloaded_bytes: u64, total_bytes: Option<u64>) -> Self {
+        Self {
+            phase: UpdatePhase::Verifying,
+            version: self.version.clone(),
+            total_bytes,
+            downloaded_bytes,
+            can_cancel: false,
+            ..Self::default()
+        }
+    }
+
+    fn installing(&self, downloaded_bytes: u64, total_bytes: Option<u64>) -> Self {
+        Self {
+            phase: UpdatePhase::Installing,
+            version: self.version.clone(),
+            total_bytes,
+            downloaded_bytes,
+            can_cancel: false,
+            ..Self::default()
+        }
+    }
+
+    fn ready(&self, downloaded_bytes: u64, total_bytes: Option<u64>) -> Self {
+        Self {
+            phase: UpdatePhase::Ready,
+            version: self.version.clone(),
+            total_bytes,
+            downloaded_bytes,
+            can_cancel: false,
+            ..Self::default()
+        }
+    }
+
+    fn failed(&self, message: impl Into<String>, recoverable: bool) -> Self {
+        Self {
+            phase: UpdatePhase::Error,
+            version: self.version.clone(),
+            total_bytes: self.total_bytes,
+            downloaded_bytes: self.downloaded_bytes,
+            bytes_per_sec: self.bytes_per_sec,
+            eta_seconds: self.eta_seconds,
+            error_message: Some(message.into()),
+            recoverable,
+            can_cancel: false,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum UpdateInstallError {
+    Cancelled,
+    Message(String),
+}
+
+impl From<String> for UpdateInstallError {
+    fn from(value: String) -> Self {
+        Self::Message(value)
+    }
+}
+
+impl From<&str> for UpdateInstallError {
+    fn from(value: &str) -> Self {
+        Self::Message(value.to_string())
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -139,14 +318,182 @@ pub fn surface_deferred_update(app: &tauri::AppHandle) {
         Err(_) => return,
     };
     if let Some(update) = pending {
+        emit_update_ready(app, &update);
+    }
+}
+
+fn emit_update_ready(app: &tauri::AppHandle, update: &PendingUpdate) {
+    let _ = app.emit(
+        "update-ready",
+        serde_json::json!({
+            "version": update.version,
+            "body": update.body,
+            "downloadBytes": update.download_bytes,
+        }),
+    );
+}
+
+fn set_update_ui_state(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    next: UpdateUiState,
+) -> Result<(), String> {
+    {
+        let mut guard = state
+            .update_install_state
+            .lock()
+            .map_err(|_| "update state lock poisoned".to_string())?;
+        *guard = next.clone();
+    }
+
+    let _ = app.emit(
+        "update://phase",
+        serde_json::json!({
+            "phase": next.phase.as_str(),
+            "version": next.version,
+            "totalBytes": next.total_bytes,
+            "downloadedBytes": next.downloaded_bytes,
+            "canCancel": next.can_cancel,
+        }),
+    );
+
+    if next.phase == UpdatePhase::Downloading {
         let _ = app.emit(
-            "update-ready",
+            "update://progress",
             serde_json::json!({
-                "version": update.version,
-                "body": update.body,
+                "downloadedBytes": next.downloaded_bytes,
+                "totalBytes": next.total_bytes,
+                "bytesPerSec": next.bytes_per_sec,
+                "etaSeconds": next.eta_seconds,
             }),
         );
     }
+
+    if next.phase == UpdatePhase::Error {
+        let _ = app.emit(
+            "update://error",
+            serde_json::json!({
+                "message": next.error_message,
+                "recoverable": next.recoverable,
+            }),
+        );
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn fetch_update_download_size(url: &reqwest::Url) -> Option<u64> {
+    let client = reqwest::Client::builder()
+        .user_agent("minutes-updater")
+        .build()
+        .ok()?;
+    let response = client.head(url.clone()).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
+fn updater_pubkey() -> Result<String, String> {
+    let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+        .map_err(|e| format!("Failed to parse tauri.conf.json: {}", e))?;
+    config
+        .get("plugins")
+        .and_then(|plugins| plugins.get("updater"))
+        .and_then(|updater| updater.get("pubkey"))
+        .and_then(|pubkey| pubkey.as_str())
+        .map(|value| value.to_string())
+        .ok_or_else(|| "Updater pubkey missing from tauri.conf.json".to_string())
+}
+
+fn verify_update_signature(
+    bytes: &[u8],
+    release_signature: &str,
+    pub_key: &str,
+) -> Result<(), String> {
+    let pubkey_decoded = String::from_utf8(
+        BASE64_STANDARD
+            .decode(pub_key)
+            .map_err(|e| format!("Failed to decode updater pubkey: {}", e))?,
+    )
+    .map_err(|e| format!("Failed to parse updater pubkey: {}", e))?;
+    let signature_decoded = String::from_utf8(
+        BASE64_STANDARD
+            .decode(release_signature)
+            .map_err(|e| format!("Failed to decode release signature: {}", e))?,
+    )
+    .map_err(|e| format!("Failed to parse release signature: {}", e))?;
+
+    let public_key = PublicKey::decode(&pubkey_decoded)
+        .map_err(|e| format!("Failed to load updater pubkey: {}", e))?;
+    let signature = Signature::decode(&signature_decoded)
+        .map_err(|e| format!("Failed to load release signature: {}", e))?;
+
+    public_key
+        .verify(bytes, &signature, true)
+        .map_err(|e| format!("Signature verification failed: {}", e))?;
+    Ok(())
+}
+
+async fn download_update_bytes(
+    update: &tauri_plugin_updater::Update,
+    cancel: &AtomicBool,
+    mut on_progress: impl FnMut(u64, Option<u64>, Option<f64>, Option<u64>) + Send,
+) -> Result<Vec<u8>, UpdateInstallError> {
+    let response = reqwest::Client::builder()
+        .user_agent("minutes-updater")
+        .build()
+        .map_err(|e| format!("Failed to build update client: {}", e))?
+        .get(update.download_url.clone())
+        .header(ACCEPT, "application/octet-stream")
+        .send()
+        .await
+        .map_err(|e| format!("Update download failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(UpdateInstallError::Message(format!(
+            "Update download failed with status {}",
+            response.status()
+        )));
+    }
+
+    let total_bytes = response.content_length();
+    let mut downloaded_bytes = 0_u64;
+    let started = Instant::now();
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(UpdateInstallError::Cancelled);
+        }
+        let chunk = chunk.map_err(|e| format!("Update download failed: {}", e))?;
+        downloaded_bytes += chunk.len() as u64;
+        bytes.extend_from_slice(&chunk);
+        let elapsed_secs = started.elapsed().as_secs_f64();
+        let bytes_per_sec = if elapsed_secs > 0.0 {
+            Some(downloaded_bytes as f64 / elapsed_secs)
+        } else {
+            None
+        };
+        let eta_seconds = match (total_bytes, bytes_per_sec) {
+            (Some(total), Some(rate)) if rate > 0.0 && downloaded_bytes < total => {
+                Some(((total - downloaded_bytes) as f64 / rate).ceil() as u64)
+            }
+            _ => None,
+        };
+        on_progress(downloaded_bytes, total_bytes, bytes_per_sec, eta_seconds);
+    }
+
+    if cancel.load(Ordering::Relaxed) {
+        return Err(UpdateInstallError::Cancelled);
+    }
+
+    Ok(bytes)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -3551,6 +3898,12 @@ pub fn cmd_status(state: tauri::State<AppState>) -> serde_json::Value {
         .into_iter()
         .map(processing_job_view)
         .collect();
+    let update_state = state
+        .update_install_state
+        .lock()
+        .ok()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
     let config = Config::load();
     let has_model = if config.transcription.engine == "parakeet" {
         let parakeet = parakeet_status_view(&config);
@@ -3624,6 +3977,7 @@ pub fn cmd_status(state: tauri::State<AppState>) -> serde_json::Value {
         "processingJobId": status.processing_job_id,
         "processingJobCount": status.processing_job_count,
         "processingJobs": processing_jobs,
+        "updateState": update_state,
         "latestOutput": latest_output,
         "activation": activation,
         "callCaptureHealth": call_capture_health,
@@ -7970,7 +8324,6 @@ pub fn cmd_probe_shortcut(keycode: i64) -> serde_json::Value {
 pub async fn cmd_install_update(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     use tauri_plugin_updater::UpdaterExt;
 
-    // Block restart if any recording/processing activity is in progress
     let state = app.state::<AppState>();
     if state.recording.load(Ordering::Relaxed) {
         return Err("Cannot update while recording. Stop the recording first.".into());
@@ -7988,30 +8341,210 @@ pub async fn cmd_install_update(app: tauri::AppHandle) -> Result<serde_json::Val
         return Err("Cannot update during dictation. Stop it first.".into());
     }
 
-    // Download and install (the background checker only checked, not downloaded)
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "No update available.".to_string())?;
-
-    let version = update.version.clone();
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|e| format!("Update failed: {}", e))?;
-
-    // Clear pending update state
-    if let Ok(mut pending) = state.pending_update.lock() {
-        *pending = None;
+    if state
+        .update_install_running
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("An update is already in progress.".into());
     }
+    state.update_install_cancel.store(false, Ordering::SeqCst);
 
-    eprintln!("[updater] v{} installed, restarting", version);
-    app.restart();
+    let initial_pending = state
+        .pending_update
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
 
-    #[allow(unreachable_code)]
-    Ok(serde_json::json!({"restarting": true}))
+    let initial_ui = initial_pending
+        .as_ref()
+        .map(|pending| UpdateUiState::available(pending.version.clone(), pending.download_bytes))
+        .unwrap_or_default()
+        .checking();
+    let _ = set_update_ui_state(&app, &state, initial_ui);
+
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app_handle.state::<AppState>();
+        let result = async {
+            let updater = app_handle
+                .updater()
+                .map_err(|e| UpdateInstallError::Message(e.to_string()))?;
+            let update = updater
+                .check()
+                .await
+                .map_err(|e| UpdateInstallError::Message(e.to_string()))?
+                .ok_or_else(|| UpdateInstallError::Message("No update available.".into()))?;
+
+            let version = update.version.clone();
+            let pending = PendingUpdate {
+                version: version.clone(),
+                body: update.body.clone().unwrap_or_default(),
+                download_bytes: fetch_update_download_size(&update.download_url).await,
+            };
+            if let Ok(mut guard) = state.pending_update.lock() {
+                *guard = Some(pending.clone());
+            }
+            emit_update_ready(&app_handle, &pending);
+
+            let downloading = UpdateUiState::available(version.clone(), pending.download_bytes)
+                .downloading(pending.download_bytes);
+            let _ = set_update_ui_state(&app_handle, &state, downloading.clone());
+
+            let bytes = download_update_bytes(
+                &update,
+                &state.update_install_cancel,
+                |downloaded_bytes, total_bytes, bytes_per_sec, eta_seconds| {
+                    let progress_state =
+                        UpdateUiState::available(version.clone(), pending.download_bytes)
+                            .with_progress(
+                                downloaded_bytes,
+                                total_bytes.or(pending.download_bytes),
+                                bytes_per_sec,
+                                eta_seconds,
+                            );
+                    let _ = set_update_ui_state(&app_handle, &state, progress_state);
+                },
+            )
+            .await?;
+
+            let total_bytes = pending.download_bytes.or(Some(bytes.len() as u64));
+            let _ = set_update_ui_state(
+                &app_handle,
+                &state,
+                UpdateUiState::available(version.clone(), total_bytes)
+                    .verifying(bytes.len() as u64, total_bytes),
+            );
+            let pubkey = updater_pubkey().map_err(UpdateInstallError::Message)?;
+            verify_update_signature(&bytes, &update.signature, &pubkey)
+                .map_err(UpdateInstallError::Message)?;
+
+            let _ = set_update_ui_state(
+                &app_handle,
+                &state,
+                UpdateUiState::available(version.clone(), total_bytes)
+                    .installing(bytes.len() as u64, total_bytes),
+            );
+            update.install(&bytes).map_err(|e| {
+                UpdateInstallError::Message(format!("Update install failed: {}", e))
+            })?;
+
+            if let Ok(mut pending) = state.pending_update.lock() {
+                *pending = None;
+            }
+
+            let _ = set_update_ui_state(
+                &app_handle,
+                &state,
+                UpdateUiState::available(version.clone(), total_bytes)
+                    .ready(bytes.len() as u64, total_bytes),
+            );
+            eprintln!("[updater] v{} installed, restarting", version);
+            std::thread::sleep(Duration::from_millis(700));
+            app_handle.restart();
+            #[allow(unreachable_code)]
+            Ok::<(), UpdateInstallError>(())
+        }
+        .await;
+
+        if let Err(error) = result {
+            match error {
+                UpdateInstallError::Cancelled => {
+                    if let Ok(mut guard) = state.update_install_state.lock() {
+                        *guard = UpdateUiState::default();
+                    }
+                    if let Ok(guard) = state.pending_update.lock() {
+                        if let Some(pending) = guard.as_ref() {
+                            emit_update_ready(&app_handle, pending);
+                        }
+                    }
+                }
+                UpdateInstallError::Message(message) => {
+                    let current = state
+                        .update_install_state
+                        .lock()
+                        .ok()
+                        .map(|guard| guard.clone())
+                        .unwrap_or_default();
+                    let _ = set_update_ui_state(&app_handle, &state, current.failed(message, true));
+                }
+            }
+        }
+
+        state.update_install_cancel.store(false, Ordering::SeqCst);
+        state.update_install_running.store(false, Ordering::SeqCst);
+    });
+
+    Ok(serde_json::json!({"started": true}))
+}
+
+#[tauri::command]
+pub fn cmd_cancel_update_install(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    if !state.update_install_running.load(Ordering::SeqCst) {
+        return Err("No update is currently in progress.".into());
+    }
+    let can_cancel = state
+        .update_install_state
+        .lock()
+        .map_err(|_| "update state lock poisoned".to_string())?
+        .can_cancel;
+    if !can_cancel {
+        return Err("Update can no longer be canceled.".into());
+    }
+    state.update_install_cancel.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cmd_debug_simulate_update(app: tauri::AppHandle, scenario: String) -> Result<(), String> {
+    if !app.config().identifier.contains(".dev") {
+        return Err("Debug updater simulation is only available in Minutes Dev.app.".into());
+    }
+    debug_emit_update_state(&app, &scenario)
+}
+
+pub fn debug_emit_update_state(app: &tauri::AppHandle, scenario: &str) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let version = state
+        .pending_update
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|pending| pending.version.clone()))
+        .unwrap_or_else(|| "0.0.0-dev".to_string());
+    let available_version = version.clone();
+    let total = Some(48 * 1024 * 1024_u64);
+    let next = match scenario {
+        "available" => UpdateUiState::available(available_version.clone(), total),
+        "checking" => UpdateUiState::available(version, total).checking(),
+        "downloading" => UpdateUiState::available(version, total).with_progress(
+            12 * 1024 * 1024,
+            total,
+            Some(1.4 * 1024.0 * 1024.0),
+            Some(26),
+        ),
+        "verifying" => UpdateUiState::available(version, total).verifying(48 * 1024 * 1024, total),
+        "installing" => {
+            UpdateUiState::available(version, total).installing(48 * 1024 * 1024, total)
+        }
+        "ready" => UpdateUiState::available(version, total).ready(48 * 1024 * 1024, total),
+        "error" => UpdateUiState::available(version, total).failed(
+            "Update download stalled. Check your connection and try again.",
+            true,
+        ),
+        _ => return Err("Unknown debug scenario.".into()),
+    };
+    if scenario == "available" {
+        emit_update_ready(
+            app,
+            &PendingUpdate {
+                version: available_version,
+                body: String::new(),
+                download_bytes: total,
+            },
+        );
+    }
+    set_update_ui_state(app, &state, next)
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -8460,5 +8993,63 @@ mod palette_window_tests {
         assert_eq!(extract_current_meeting_path("relative/path.md"), None);
         assert_eq!(extract_current_meeting_path("/abs/path.txt"), None);
         assert_eq!(extract_current_meeting_path("just a sentence"), None);
+    }
+}
+
+#[cfg(test)]
+mod update_ui_tests {
+    use super::*;
+
+    #[test]
+    fn update_ui_state_tracks_phase_transitions() {
+        let available = UpdateUiState::available("0.12.0", Some(48 * 1024 * 1024));
+        assert_eq!(available.phase, UpdatePhase::Available);
+        assert_eq!(available.version.as_deref(), Some("0.12.0"));
+        assert!(!available.can_cancel);
+
+        let checking = available.checking();
+        assert_eq!(checking.phase, UpdatePhase::Checking);
+        assert!(checking.can_cancel);
+
+        let downloading = checking.with_progress(
+            12 * 1024 * 1024,
+            Some(48 * 1024 * 1024),
+            Some(1.5 * 1024.0 * 1024.0),
+            Some(24),
+        );
+        assert_eq!(downloading.phase, UpdatePhase::Downloading);
+        assert_eq!(downloading.downloaded_bytes, 12 * 1024 * 1024);
+        assert!(downloading.can_cancel);
+
+        let verifying = downloading.verifying(48 * 1024 * 1024, Some(48 * 1024 * 1024));
+        assert_eq!(verifying.phase, UpdatePhase::Verifying);
+        assert!(!verifying.can_cancel);
+
+        let installing = verifying.installing(48 * 1024 * 1024, Some(48 * 1024 * 1024));
+        assert_eq!(installing.phase, UpdatePhase::Installing);
+        assert!(!installing.can_cancel);
+
+        let ready = installing.ready(48 * 1024 * 1024, Some(48 * 1024 * 1024));
+        assert_eq!(ready.phase, UpdatePhase::Ready);
+        assert!(!ready.can_cancel);
+    }
+
+    #[test]
+    fn update_ui_state_failure_preserves_context() {
+        let base = UpdateUiState::available("0.12.0", Some(1024)).with_progress(
+            256,
+            Some(1024),
+            Some(128.0),
+            Some(6),
+        );
+        let failed = base.failed("network stalled", true);
+
+        assert_eq!(failed.phase, UpdatePhase::Error);
+        assert_eq!(failed.version.as_deref(), Some("0.12.0"));
+        assert_eq!(failed.total_bytes, Some(1024));
+        assert_eq!(failed.downloaded_bytes, 256);
+        assert_eq!(failed.error_message.as_deref(), Some("network stalled"));
+        assert!(failed.recoverable);
+        assert!(!failed.can_cancel);
     }
 }

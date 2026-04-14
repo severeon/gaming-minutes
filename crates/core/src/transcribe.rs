@@ -1681,6 +1681,31 @@ fn parakeet_seen_models() -> &'static Mutex<HashSet<String>> {
 }
 
 #[cfg(feature = "parakeet")]
+fn append_parakeet_boost_args(command: &mut std::process::Command, config: &Config) {
+    let limit = config.transcription.parakeet_boost_limit;
+    if limit == 0 {
+        return;
+    }
+
+    match crate::graph::parakeet_boost_phrases(limit) {
+        Ok(phrases) if !phrases.is_empty() => {
+            command.args([
+                "--boost-score",
+                &config.transcription.parakeet_boost_score.to_string(),
+            ]);
+            for phrase in &phrases {
+                command.args(["--boost", phrase]);
+            }
+            tracing::debug!(phrases = phrases.len(), "applied parakeet boost phrases");
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::debug!(error = %error, "could not load parakeet boost phrases");
+        }
+    }
+}
+
+#[cfg(feature = "parakeet")]
 fn resolve_minutes_parakeet_helper() -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("MINUTES_PARAKEET_HELPER") {
         let path = PathBuf::from(explicit);
@@ -1756,6 +1781,7 @@ pub fn run_parakeet_cli_structured(
             .args(["--vad", vad_path])
             .args(["--vad-threshold", &vad_threshold.to_string()]);
     }
+    append_parakeet_boost_args(&mut command, config);
     let output = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1830,6 +1856,7 @@ pub fn run_parakeet_cli_structured_batch(
             .args(["--vad", vad_path])
             .args(["--vad-threshold", &vad_threshold.to_string()]);
     }
+    append_parakeet_boost_args(&mut command, config);
 
     let output = command
         .stdout(std::process::Stdio::piped())
@@ -2258,6 +2285,7 @@ pub fn warmup_parakeet(config: &Config) -> Result<ParakeetWarmupStats, Transcrib
             &PARAKEET_NATIVE_VAD_THRESHOLD.to_string(),
         ]);
     }
+    append_parakeet_boost_args(&mut command, config);
     let output = command
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())

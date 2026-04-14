@@ -163,6 +163,116 @@ fn create_schema(conn: &Connection) -> Result<(), GraphError> {
     Ok(())
 }
 
+pub fn parakeet_boost_phrases(limit: usize) -> Result<Vec<String>, GraphError> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let conn = open_db(&db_path())?;
+    let mut phrases = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let mut people_stmt = conn.prepare(
+        "SELECT slug, name
+         FROM people
+         ORDER BY meeting_count DESC, last_seen DESC
+         LIMIT 200",
+    )?;
+    let people_rows = people_stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in people_rows {
+        let (slug, name) = row?;
+        if let Some(phrase) = normalize_boost_phrase(&name, Some(&slug)) {
+            push_unique_phrase(&mut phrases, &mut seen, phrase, limit);
+        }
+        if phrases.len() >= limit {
+            return Ok(phrases);
+        }
+    }
+
+    let mut meeting_stmt = conn.prepare(
+        "SELECT title
+         FROM meetings
+         ORDER BY date DESC
+         LIMIT 200",
+    )?;
+    let meeting_rows = meeting_stmt.query_map([], |row| row.get::<_, String>(0))?;
+    for row in meeting_rows {
+        let title = row?;
+        for fragment in split_boost_title_fragments(&title) {
+            if let Some(phrase) = normalize_boost_phrase(&fragment, None) {
+                push_unique_phrase(&mut phrases, &mut seen, phrase, limit);
+            }
+            if phrases.len() >= limit {
+                return Ok(phrases);
+            }
+        }
+    }
+
+    Ok(phrases)
+}
+
+fn push_unique_phrase(
+    phrases: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+    phrase: String,
+    limit: usize,
+) {
+    if phrases.len() >= limit {
+        return;
+    }
+    let key = phrase.to_lowercase();
+    if seen.insert(key) {
+        phrases.push(phrase);
+    }
+}
+
+fn normalize_boost_phrase(phrase: &str, slug: Option<&str>) -> Option<String> {
+    let phrase = phrase.trim().trim_matches(|c: char| c == '"' || c == '\'');
+    if phrase.len() < 3 {
+        return None;
+    }
+
+    if let Some(slug) = slug {
+        if slug == "unknown"
+            || slug == "unknown-speaker"
+            || slug.starts_with("speaker-")
+            || slug.starts_with("unknown-")
+        {
+            return None;
+        }
+    }
+
+    let lower = phrase.to_lowercase();
+    if matches!(
+        lower.as_str(),
+        "unknown" | "unknown speaker" | "speaker 0" | "speaker 1" | "speaker 2" | "speaker 3"
+    ) {
+        return None;
+    }
+
+    let has_signal = phrase.chars().any(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+    if !has_signal {
+        return None;
+    }
+
+    Some(phrase.to_string())
+}
+
+fn split_boost_title_fragments(title: &str) -> Vec<String> {
+    title
+        .replace('—', "|")
+        .replace('&', "|")
+        .replace(',', "|")
+        .split('|')
+        .flat_map(|part| part.split(" with "))
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_string())
+        .collect()
+}
+
 // ── Rebuild ───────────────────────────────────────────────────
 
 /// Rebuild the entire graph index from markdown files.
@@ -1539,5 +1649,28 @@ Short meeting.
             )
             .unwrap();
         assert!(null_decisions >= 1, "Decisions should have NULL person_id");
+    }
+
+    #[test]
+    fn normalize_boost_phrase_filters_placeholder_people() {
+        assert!(normalize_boost_phrase("Speaker 1", Some("speaker-1")).is_none());
+        assert!(normalize_boost_phrase("Unknown speaker", Some("unknown-speaker")).is_none());
+        assert_eq!(
+            normalize_boost_phrase("Matt Mullenweg", Some("matt-mullenweg")),
+            Some("Matt Mullenweg".into())
+        );
+    }
+
+    #[test]
+    fn split_boost_title_fragments_keeps_high_signal_chunks() {
+        let parts = split_boost_title_fragments("Wesley Asana, Box & X1 Integration");
+        assert_eq!(
+            parts,
+            vec![
+                "Wesley Asana".to_string(),
+                "Box".to_string(),
+                "X1 Integration".to_string()
+            ]
+        );
     }
 }

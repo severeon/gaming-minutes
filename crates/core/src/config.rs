@@ -112,6 +112,11 @@ pub struct TranscriptionConfig {
     pub parakeet_binary: String,
     /// Parakeet model type: "tdt-ctc-110m", "tdt-600m".
     pub parakeet_model: String,
+    /// Maximum number of knowledge-graph phrases to pass via `--boost`.
+    /// Set to 0 to disable phrase boosting. Default: off until tuned further.
+    pub parakeet_boost_limit: usize,
+    /// Score passed to parakeet.cpp `--boost-score` when boost phrases are active.
+    pub parakeet_boost_score: f32,
     /// Enable parakeet.cpp fp16 inference on the GPU path.
     ///
     /// This lowers memory use, but on the current process-per-transcription
@@ -541,6 +546,8 @@ impl Default for TranscriptionConfig {
             noise_reduction: true,
             parakeet_binary: "parakeet".into(),
             parakeet_model: "tdt-600m".into(),
+            parakeet_boost_limit: 0,
+            parakeet_boost_score: 2.0,
             parakeet_fp16: false,
             parakeet_vocab: "tdt-600m.tokenizer.vocab".into(),
         }
@@ -871,6 +878,8 @@ mod tests {
         assert_eq!(config.transcription.min_words, 3);
         assert_eq!(config.transcription.parakeet_binary, "parakeet");
         assert_eq!(config.transcription.parakeet_model, "tdt-600m");
+        assert_eq!(config.transcription.parakeet_boost_limit, 0);
+        assert_eq!(config.transcription.parakeet_boost_score, 2.0);
         assert!(!config.transcription.parakeet_fp16);
         assert_eq!(
             config.transcription.parakeet_vocab,

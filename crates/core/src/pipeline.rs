@@ -613,6 +613,7 @@ pub struct BackgroundPipelineContext {
     pub pre_context: Option<String>,
     pub calendar_event: Option<crate::calendar::CalendarEvent>,
     pub recorded_at: Option<DateTime<Local>>,
+    pub requested_title: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1013,6 +1014,15 @@ where
         .iter()
         .map(|entity| entity.label.clone())
         .collect();
+    let title_generation = maybe_refine_title_with_llm(
+        &artifact.frontmatter.title,
+        context.requested_title.as_deref(),
+        summary.as_deref(),
+        raw_summary.as_ref(),
+        &entities,
+        config,
+        summarize::refine_title,
+    );
 
     let mut frontmatter = artifact.frontmatter.clone();
     frontmatter.status = if config.summarization.engine != "none" {
@@ -1029,7 +1039,7 @@ where
     frontmatter.speaker_map = speaker_map;
 
     on_progress(PipelineStage::Saving);
-    let result = markdown::rewrite_with_retry_path(
+    let mut result = markdown::rewrite_with_retry_path(
         &artifact.write_result.path,
         &frontmatter,
         &transcript,
@@ -1037,6 +1047,20 @@ where
         context.user_notes.as_deref(),
         Some(audio_path),
     )?;
+    apply_title_generation(
+        audio_path,
+        &mut result,
+        &mut frontmatter,
+        title_generation,
+        |duration_ms, extra| {
+            logging::log_step(
+                "title_generation",
+                &audio_path.display().to_string(),
+                duration_ms,
+                extra,
+            );
+        },
+    );
 
     if frontmatter.r#type == ContentType::Meeting {
         log_attribution_decision(audio_path, &result.path, attribution_ms, &attribution.debug);
@@ -1363,6 +1387,15 @@ where
         .iter()
         .map(|entity| entity.label.clone())
         .collect();
+    let title_generation = maybe_refine_title_with_llm(
+        &auto_title,
+        title,
+        summary.as_deref(),
+        raw_summary.as_ref(),
+        &entities,
+        config,
+        summarize::refine_title,
+    );
 
     // Determine source field: sidecar overrides default, normalize to "voice-memos" (plural)
     let source = if let Some(s) = sidecar.and_then(|s| s.source.clone()) {
@@ -1389,7 +1422,7 @@ where
         .or_else(|| metadata.created().ok().map(DateTime::<Local>::from))
         .unwrap_or_else(Local::now);
 
-    let frontmatter = Frontmatter {
+    let mut frontmatter = Frontmatter {
         title: auto_title,
         r#type: content_type,
         date: recording_date,
@@ -1420,7 +1453,7 @@ where
 
     tracing::info!(step = "write", "writing markdown");
     let step_start = std::time::Instant::now();
-    let result = markdown::write_with_retry_path(
+    let mut result = markdown::write_with_retry_path(
         &frontmatter,
         &transcript,
         summary.as_deref(),
@@ -1428,6 +1461,20 @@ where
         Some(audio_path),
         config,
     )?;
+    apply_title_generation(
+        audio_path,
+        &mut result,
+        &mut frontmatter,
+        title_generation,
+        |duration_ms, extra| {
+            logging::log_step(
+                "title_generation",
+                &audio_path.display().to_string(),
+                duration_ms,
+                extra,
+            );
+        },
+    );
 
     if frontmatter.r#type == ContentType::Meeting {
         log_attribution_decision(audio_path, &result.path, attribution_ms, &attribution.debug);
@@ -1521,6 +1568,229 @@ fn estimate_duration(audio_path: &Path) -> String {
     } else {
         format!("{}s", remaining_secs)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TitleGenerationDecision {
+    final_title: String,
+    refined_title: Option<String>,
+    outcome: &'static str,
+    model: Option<String>,
+    input_chars: usize,
+    detail: Option<String>,
+}
+
+fn maybe_refine_title_with_llm<F>(
+    fallback_title: &str,
+    explicit_title: Option<&str>,
+    summary_text: Option<&str>,
+    raw_summary: Option<&summarize::Summary>,
+    entities: &markdown::EntityLinks,
+    config: &Config,
+    refine: F,
+) -> TitleGenerationDecision
+where
+    F: FnOnce(
+        &str,
+        &summarize::Summary,
+        &markdown::EntityLinks,
+        &Config,
+    ) -> Result<summarize::TitleRefinement, Box<dyn std::error::Error>>,
+{
+    if explicit_title.is_some() {
+        return TitleGenerationDecision {
+            final_title: fallback_title.to_string(),
+            refined_title: None,
+            outcome: "fallback",
+            model: None,
+            input_chars: 0,
+            detail: Some("explicit-title".into()),
+        };
+    }
+
+    let Some(summary_text) = summary_text.filter(|text| !text.trim().is_empty()) else {
+        return TitleGenerationDecision {
+            final_title: fallback_title.to_string(),
+            refined_title: None,
+            outcome: "fallback",
+            model: None,
+            input_chars: 0,
+            detail: Some("missing-summary-text".into()),
+        };
+    };
+    let Some(raw_summary) = raw_summary else {
+        return TitleGenerationDecision {
+            final_title: fallback_title.to_string(),
+            refined_title: None,
+            outcome: "fallback",
+            model: None,
+            input_chars: 0,
+            detail: Some("missing-summary-struct".into()),
+        };
+    };
+
+    let attempted_model = summarize::title_refinement_model(config);
+    let input_chars = summarize::title_refinement_input_chars(summary_text, raw_summary, entities);
+
+    match refine(summary_text, raw_summary, entities, config) {
+        Ok(refined) => {
+            let cleaned = sanitize_llm_title_candidate(&refined.title);
+            if llm_title_passes_quality(&cleaned) {
+                TitleGenerationDecision {
+                    final_title: cleaned.clone(),
+                    refined_title: Some(cleaned),
+                    outcome: "llm",
+                    model: Some(refined.model),
+                    input_chars: refined.input_chars,
+                    detail: None,
+                }
+            } else {
+                TitleGenerationDecision {
+                    final_title: fallback_title.to_string(),
+                    refined_title: None,
+                    outcome: "fallback",
+                    model: Some(refined.model),
+                    input_chars: refined.input_chars,
+                    detail: Some(format!("rejected-title: {}", cleaned)),
+                }
+            }
+        }
+        Err(error) => TitleGenerationDecision {
+            final_title: fallback_title.to_string(),
+            refined_title: None,
+            outcome: "error",
+            model: attempted_model,
+            input_chars,
+            detail: Some(error.to_string()),
+        },
+    }
+}
+
+fn apply_title_generation(
+    audio_path: &Path,
+    result: &mut WriteResult,
+    frontmatter: &mut Frontmatter,
+    decision: TitleGenerationDecision,
+    mut log_step: impl FnMut(u64, serde_json::Value),
+) {
+    let start = std::time::Instant::now();
+    let mut outcome = decision.outcome;
+    let mut detail = decision.detail.clone();
+
+    if let Some(refined_title) = decision.refined_title.as_ref() {
+        if refined_title != &result.title {
+            match markdown::rename_meeting(&result.path, refined_title) {
+                Ok(new_path) => {
+                    result.path = new_path;
+                    result.title = refined_title.clone();
+                    frontmatter.title = refined_title.clone();
+                }
+                Err(error) => {
+                    outcome = "error";
+                    detail = Some(error.to_string());
+                    tracing::warn!(
+                        error = %error,
+                        output = %result.path.display(),
+                        refined_title = %refined_title,
+                        "failed to apply LLM-refined title"
+                    );
+                }
+            }
+        } else {
+            frontmatter.title = refined_title.clone();
+        }
+    } else {
+        frontmatter.title = decision.final_title.clone();
+    }
+
+    let mut extra = serde_json::json!({
+        "outcome": outcome,
+        "model": decision.model,
+        "input_chars": decision.input_chars,
+        "title": result.title,
+    });
+    if let Some(detail) = detail {
+        extra["detail"] = serde_json::json!(detail);
+    }
+    if result.path.as_os_str() != audio_path.as_os_str() {
+        extra["output"] = serde_json::json!(result.path.display().to_string());
+    }
+
+    log_step(start.elapsed().as_millis() as u64, extra);
+}
+
+fn sanitize_llm_title_candidate(candidate: &str) -> String {
+    let first_line = candidate
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default();
+    let without_label = first_line
+        .strip_prefix("Title:")
+        .or_else(|| first_line.strip_prefix("title:"))
+        .or_else(|| first_line.strip_prefix("Meeting title:"))
+        .or_else(|| first_line.strip_prefix("meeting title:"))
+        .unwrap_or(first_line)
+        .trim();
+    normalize_space(
+        without_label.trim_matches(|c: char| matches!(c, '"' | '\'' | '`' | '*' | '-' | ' ')),
+    )
+    .trim_matches(|c: char| matches!(c, '.' | ':' | ';'))
+    .to_string()
+}
+
+fn llm_title_passes_quality(candidate: &str) -> bool {
+    if candidate.is_empty() || candidate.chars().count() > 80 {
+        return false;
+    }
+
+    let words: Vec<String> = candidate
+        .split_whitespace()
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '&' && c != '×')
+                .to_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect();
+
+    if words.len() < 2 || words.len() > 12 {
+        return false;
+    }
+
+    let normalized = words.join(" ");
+    let generic_exact = [
+        "call",
+        "conversation",
+        "meeting",
+        "memo",
+        "recording",
+        "sync",
+        "untitled",
+        "untitled recording",
+    ];
+    if generic_exact.contains(&normalized.as_str()) {
+        return false;
+    }
+
+    let generic_words = [
+        "call",
+        "chat",
+        "conversation",
+        "discussion",
+        "meeting",
+        "memo",
+        "notes",
+        "recording",
+        "review",
+        "sync",
+        "title",
+        "update",
+    ];
+    let stopwords = ["a", "an", "and", "for", "of", "on", "the", "to", "with"];
+
+    !words
+        .iter()
+        .all(|word| generic_words.contains(&word.as_str()) || stopwords.contains(&word.as_str()))
 }
 
 /// Generate a smart title from either the user-provided context or transcript.
@@ -2282,6 +2552,64 @@ pub fn run_post_record_hook(config: &Config, transcript_path: &Path) {
 mod tests {
     use super::*;
 
+    fn sample_summary() -> summarize::Summary {
+        summarize::Summary {
+            text: "Discussed Command RX codebase walkthrough and next steps.".into(),
+            key_points: vec![
+                "Walked through the Command RX codebase".into(),
+                "Aligned on next implementation tasks".into(),
+            ],
+            decisions: vec!["Use the new ingestion pipeline".into()],
+            action_items: vec!["@mat: Send follow-up notes by Friday".into()],
+            open_questions: vec!["@samantha: Which rollout order should we use?".into()],
+            commitments: vec!["@samantha: Share the access details".into()],
+            participants: vec!["Mat".into(), "Samantha".into()],
+        }
+    }
+
+    fn write_test_meeting(title: &str) -> (tempfile::TempDir, WriteResult, Frontmatter) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.output_dir = dir.path().to_path_buf();
+
+        let frontmatter = Frontmatter {
+            title: title.into(),
+            r#type: ContentType::Meeting,
+            date: Local::now(),
+            duration: "12m 0s".into(),
+            source: None,
+            status: Some(OutputStatus::Complete),
+            tags: vec![],
+            attendees: vec!["Samantha".into()],
+            attendees_raw: None,
+            calendar_event: None,
+            people: vec![],
+            entities: markdown::EntityLinks::default(),
+            device: None,
+            captured_at: None,
+            context: None,
+            action_items: vec![],
+            decisions: vec![],
+            intents: vec![],
+            recorded_by: Some("Mat".into()),
+            visibility: None,
+            speaker_map: vec![],
+            filter_diagnosis: None,
+        };
+
+        let result = markdown::write_with_retry_path(
+            &frontmatter,
+            "Transcript body",
+            Some("Summary body"),
+            None,
+            None,
+            &config,
+        )
+        .unwrap();
+
+        (dir, result, frontmatter)
+    }
+
     #[test]
     fn generate_title_takes_first_words() {
         let transcript = "We need to discuss the new pricing strategy for Q2";
@@ -2328,6 +2656,103 @@ mod tests {
     fn generate_title_rejects_generic_meeting_openers() {
         let transcript = "Okay, this is a meeting that we're gonna be doing here";
         let title = generate_title(transcript, None);
+        assert_eq!(title, "Untitled Recording");
+    }
+
+    #[test]
+    fn llm_title_refinement_success_renames_written_meeting() {
+        let (_dir, mut result, mut frontmatter) = write_test_meeting("Untitled Recording");
+        let audio_path = Path::new("/tmp/input.wav");
+        let summary = sample_summary();
+        let decision = maybe_refine_title_with_llm(
+            "Untitled Recording",
+            None,
+            Some("Command RX walkthrough with implementation planning."),
+            Some(&summary),
+            &markdown::EntityLinks::default(),
+            &Config::default(),
+            |_, _, _, _| {
+                Ok(summarize::TitleRefinement {
+                    title: "Command RX Codebase Walkthrough".into(),
+                    model: "agent:codex".into(),
+                    input_chars: 128,
+                })
+            },
+        );
+
+        apply_title_generation(
+            audio_path,
+            &mut result,
+            &mut frontmatter,
+            decision,
+            |_, _| {},
+        );
+
+        assert_eq!(result.title, "Command RX Codebase Walkthrough");
+        assert_eq!(frontmatter.title, "Command RX Codebase Walkthrough");
+        assert!(result.path.exists());
+        assert!(result
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .contains("command-rx-codebase-walkthrough"));
+        let content = std::fs::read_to_string(&result.path).unwrap();
+        assert!(content.contains("title: \"Command RX Codebase Walkthrough\""));
+    }
+
+    #[test]
+    fn llm_title_refinement_failure_falls_back_to_algorithmic_title() {
+        let summary = sample_summary();
+        let mut config = Config::default();
+        config.summarization.engine = "agent".into();
+        config.summarization.agent_command = "claude".into();
+        let decision = maybe_refine_title_with_llm(
+            "Roadmap Review",
+            None,
+            Some("Roadmap discussion"),
+            Some(&summary),
+            &markdown::EntityLinks::default(),
+            &config,
+            |_, _, _, _| Err("rate limited".into()),
+        );
+
+        assert_eq!(decision.final_title, "Roadmap Review");
+        assert_eq!(decision.refined_title, None);
+        assert_eq!(decision.outcome, "error");
+        assert_eq!(decision.model, Some("agent:claude".into()));
+    }
+
+    #[test]
+    fn llm_title_quality_filter_rejects_bad_titles() {
+        let summary = sample_summary();
+        let mut config = Config::default();
+        config.summarization.engine = "agent".into();
+        config.summarization.agent_command = "claude".into();
+        let decision = maybe_refine_title_with_llm(
+            "Roadmap Review",
+            None,
+            Some("Roadmap discussion"),
+            Some(&summary),
+            &markdown::EntityLinks::default(),
+            &config,
+            |_, _, _, _| {
+                Ok(summarize::TitleRefinement {
+                    title: "Meeting".into(),
+                    model: "agent:codex".into(),
+                    input_chars: 64,
+                })
+            },
+        );
+
+        assert_eq!(decision.final_title, "Roadmap Review");
+        assert_eq!(decision.refined_title, None);
+        assert_eq!(decision.outcome, "fallback");
+    }
+
+    #[test]
+    fn algorithmic_fallback_still_works_standalone() {
+        let title = generate_title("Hello.", None);
         assert_eq!(title, "Untitled Recording");
     }
 

@@ -1,6 +1,8 @@
 use std::process::Command;
 use std::time::Duration;
 
+use chrono::{DateTime, Datelike, Local, Timelike};
+
 // ──────────────────────────────────────────────────────────────
 // Calendar integration — upcoming meetings from macOS Calendar.
 //
@@ -166,6 +168,24 @@ pub fn upcoming_events(lookahead_minutes: u32) -> Vec<CalendarEvent> {
 /// Find calendar events that overlap a given time window.
 /// Used to match a recording to its calendar event after the fact.
 /// On non-macOS platforms, returns an empty list.
+pub fn events_overlapping(at: DateTime<Local>) -> Vec<CalendarEvent> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = at;
+        Vec::new()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // Preserve the fast helper path for "right now" lookups, but allow
+        // historical reprocessing to center the query on the recording time.
+        if (Local::now() - at).num_seconds().abs() <= 60 {
+            return events_overlapping_now();
+        }
+
+        query_events_with_attendees_at(at)
+    }
+}
+
 pub fn events_overlapping_now() -> Vec<CalendarEvent> {
     #[cfg(not(target_os = "macos"))]
     {
@@ -185,10 +205,42 @@ pub fn events_overlapping_now() -> Vec<CalendarEvent> {
 
 /// AppleScript query that fetches current/recent events WITH attendee names.
 fn query_events_with_attendees() -> Vec<CalendarEvent> {
+    query_events_with_attendees_at(Local::now())
+}
+
+fn applescript_month(month: u32) -> &'static str {
+    match month {
+        1 => "January",
+        2 => "February",
+        3 => "March",
+        4 => "April",
+        5 => "May",
+        6 => "June",
+        7 => "July",
+        8 => "August",
+        9 => "September",
+        10 => "October",
+        11 => "November",
+        12 => "December",
+        _ => "January",
+    }
+}
+
+/// AppleScript query centered on an explicit timestamp.
+fn query_events_with_attendees_at(center: DateTime<Local>) -> Vec<CalendarEvent> {
     let script = r#"set now to current date
+set year of now to __YEAR__
+set month of now to __MONTH__
+set day of now to __DAY__
+set hours of now to __HOUR__
+set minutes of now to __MINUTE__
+set seconds of now to __SECOND__
 set windowStart to now - (2 * 60 * 60)
 set windowEnd to now + (2 * 60 * 60)
 set todayStart to current date
+set year of todayStart to __YEAR__
+set month of todayStart to __MONTH__
+set day of todayStart to __DAY__
 set hours of todayStart to 0
 set minutes of todayStart to 0
 set seconds of todayStart to 0
@@ -227,7 +279,13 @@ tell application "Calendar"
         end try
     end repeat
 end tell
-return output"#;
+return output"#
+        .replace("__YEAR__", &center.year().to_string())
+        .replace("__MONTH__", applescript_month(center.month()))
+        .replace("__DAY__", &center.day().to_string())
+        .replace("__HOUR__", &center.hour().to_string())
+        .replace("__MINUTE__", &center.minute().to_string())
+        .replace("__SECOND__", &center.second().to_string());
 
     let mut cmd = Command::new("osascript");
     cmd.arg("-e").arg(script);

@@ -825,6 +825,9 @@ pub fn write_transcript_artifact(
     transcribe_ms: u64,
 ) -> Result<TranscriptArtifact, MinutesError> {
     let word_count = transcript.split_whitespace().count();
+    let metadata = std::fs::metadata(audio_path)?;
+    let recording_date =
+        infer_recording_date(context.recorded_at, context.sidecar.as_ref(), &metadata);
     logging::log_step(
         "transcribe",
         &audio_path.display().to_string(),
@@ -839,10 +842,9 @@ pub fn write_transcript_artifact(
     };
 
     let matched_event = if content_type == ContentType::Meeting {
-        context
-            .calendar_event
-            .clone()
-            .or_else(|| crate::calendar::events_overlapping_now().first().cloned())
+        context.calendar_event.clone().or_else(|| {
+            select_calendar_event(&crate::calendar::events_overlapping(recording_date), title)
+        })
     } else {
         None
     };
@@ -907,7 +909,7 @@ pub fn write_transcript_artifact(
     let frontmatter = Frontmatter {
         title: auto_title,
         r#type: content_type,
-        date: context.recorded_at.unwrap_or_else(Local::now),
+        date: recording_date,
         duration: estimate_duration(audio_path),
         source,
         status,
@@ -1332,6 +1334,8 @@ where
 
     // Verify file exists and is not empty
     let metadata = std::fs::metadata(audio_path)?;
+    let recording_date =
+        infer_recording_date(sidecar.and_then(|s| s.captured_at), sidecar, &metadata);
     if metadata.len() == 0 {
         return Err(crate::error::TranscribeError::EmptyAudio.into());
     }
@@ -1564,15 +1568,17 @@ where
 
     // Query calendar for events overlapping the recording window
     let calendar_events = if content_type == ContentType::Meeting {
-        crate::calendar::events_overlapping_now()
+        crate::calendar::events_overlapping(recording_date)
     } else {
         Vec::new()
     };
 
-    // Pick the best matching calendar event (closest to now, or the one currently happening)
-    let matched_event = calendar_events.first();
-    let calendar_event_title = matched_event.map(|e| e.title.clone());
+    // Pick the best matching calendar event based on recording-time proximity,
+    // with an extra title-similarity guard when the user supplied `--title`.
+    let matched_event = select_calendar_event(&calendar_events, title);
+    let calendar_event_title = matched_event.as_ref().map(|e| e.title.clone());
     let calendar_attendees: Vec<String> = matched_event
+        .as_ref()
         .map(|e| e.attendees.clone())
         .unwrap_or_default();
 
@@ -1683,12 +1689,6 @@ where
         &structured_decisions,
         &structured_intents,
     );
-
-    // Use sidecar captured_at, then audio file creation time, then now() as last resort
-    let recording_date = sidecar
-        .and_then(|s| s.captured_at)
-        .or_else(|| metadata.created().ok().map(DateTime::<Local>::from))
-        .unwrap_or_else(Local::now);
 
     let mut frontmatter = Frontmatter {
         title: auto_title,
@@ -2189,6 +2189,59 @@ fn strip_lead_in_phrase(line: &str) -> String {
 
 fn normalize_space(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn infer_recording_date(
+    recorded_at: Option<DateTime<Local>>,
+    sidecar: Option<&SidecarMetadata>,
+    metadata: &std::fs::Metadata,
+) -> DateTime<Local> {
+    recorded_at
+        .or_else(|| sidecar.and_then(|s| s.captured_at))
+        .or_else(|| metadata.created().ok().map(DateTime::<Local>::from))
+        .unwrap_or_else(Local::now)
+}
+
+fn title_tokens(text: &str) -> BTreeSet<String> {
+    const STOPWORDS: &[&str] = &[
+        "a", "an", "and", "call", "for", "meeting", "prep", "session", "sync", "the", "to", "with",
+    ];
+
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .filter_map(|token| {
+            let normalized = token.trim().to_lowercase();
+            if normalized.len() < 3 || STOPWORDS.contains(&normalized.as_str()) {
+                None
+            } else {
+                Some(normalized)
+            }
+        })
+        .collect()
+}
+
+fn title_overlap(a: &str, b: &str) -> usize {
+    let a_tokens = title_tokens(a);
+    let b_tokens = title_tokens(b);
+    a_tokens.intersection(&b_tokens).count()
+}
+
+fn select_calendar_event(
+    events: &[crate::calendar::CalendarEvent],
+    title_override: Option<&str>,
+) -> Option<crate::calendar::CalendarEvent> {
+    let explicit_title = title_override
+        .map(str::trim)
+        .filter(|title| !title.is_empty());
+
+    events
+        .iter()
+        .filter(|event| {
+            explicit_title
+                .map(|title| title_overlap(title, &event.title) > 0)
+                .unwrap_or(true)
+        })
+        .min_by_key(|event| event.minutes_until.abs())
+        .cloned()
 }
 
 fn merge_attendees(existing: &[String], additions: &[String]) -> Vec<String> {
@@ -3308,6 +3361,65 @@ mod tests {
             &["alex".into(), "Casey".into()],
         );
         assert_eq!(merged, vec!["Mat", "Alex", "Casey"]);
+    }
+
+    #[test]
+    fn select_calendar_event_prefers_closest_candidate() {
+        let selected = select_calendar_event(
+            &[
+                crate::calendar::CalendarEvent {
+                    title: "Far Event".into(),
+                    start: "2026-04-14 09:00".into(),
+                    minutes_until: 45,
+                    attendees: vec![],
+                    url: None,
+                },
+                crate::calendar::CalendarEvent {
+                    title: "Closest Event".into(),
+                    start: "2026-04-14 10:00".into(),
+                    minutes_until: 5,
+                    attendees: vec![],
+                    url: None,
+                },
+            ],
+            None,
+        )
+        .expect("expected a match");
+
+        assert_eq!(selected.title, "Closest Event");
+    }
+
+    #[test]
+    fn select_calendar_event_requires_overlap_with_explicit_title() {
+        let selected = select_calendar_event(
+            &[crate::calendar::CalendarEvent {
+                title: "Mat & Supernal Coding Meeting".into(),
+                start: "2026-04-14 12:30".into(),
+                minutes_until: 4,
+                attendees: vec!["mat@example.com".into()],
+                url: None,
+            }],
+            Some("Wesley prep session recovery"),
+        );
+
+        assert!(selected.is_none());
+    }
+
+    #[test]
+    fn select_calendar_event_allows_explicit_title_when_names_overlap() {
+        let selected = select_calendar_event(
+            &[crate::calendar::CalendarEvent {
+                title: "Wesley Young Prep Session".into(),
+                start: "2026-04-14 12:00".into(),
+                minutes_until: 2,
+                attendees: vec!["wesley@example.com".into()],
+                url: None,
+            }],
+            Some("Wesley prep session recovery"),
+        )
+        .expect("expected overlapping explicit title to keep match");
+
+        assert_eq!(selected.title, "Wesley Young Prep Session");
     }
 
     #[test]

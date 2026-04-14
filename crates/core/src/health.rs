@@ -43,70 +43,7 @@ pub fn check_all(config: &Config) -> Vec<HealthItem> {
 /// Check if the whisper model is downloaded and ready.
 pub fn model_status(config: &Config) -> HealthItem {
     if config.transcription.engine == "parakeet" {
-        let binary = &config.transcription.parakeet_binary;
-        let binary_found = std::process::Command::new(binary)
-            .arg("--help")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok();
-        let model =
-            crate::parakeet::resolve_model_file(config, &config.transcription.parakeet_model);
-        let tokenizer = crate::parakeet::resolve_tokenizer_file(
-            config,
-            &config.transcription.parakeet_model,
-            &config.transcription.parakeet_vocab,
-        );
-        let metadata =
-            crate::parakeet::read_install_metadata(config, &config.transcription.parakeet_model);
-
-        let all_ready = binary_found && model.is_some() && tokenizer.is_some();
-        let mut problems = Vec::new();
-        if !binary_found {
-            problems.push(format!("binary '{}' not in PATH", binary));
-        }
-        if model.is_none() {
-            problems.push(format!(
-                "model {} not installed",
-                config.transcription.parakeet_model
-            ));
-        }
-        if tokenizer.is_none() {
-            problems.push("SentencePiece tokenizer not installed".to_string());
-        }
-
-        let detail = if all_ready {
-            let model_path = model.unwrap();
-            let tokenizer_path = tokenizer.unwrap();
-            let metadata_suffix = if let Some(metadata) = metadata {
-                format!(
-                    " Metadata: {} from {}.",
-                    metadata.source_artifact, metadata.source_repo
-                )
-            } else {
-                " Metadata missing; rerun `minutes setup --parakeet` after installing files to persist provenance."
-                    .to_string()
-            };
-            format!(
-                "Parakeet {} ready. Model: {}. Tokenizer: {}.{}",
-                config.transcription.parakeet_model,
-                model_path.display(),
-                tokenizer_path.display(),
-                metadata_suffix
-            )
-        } else {
-            format!(
-                "Parakeet not ready: {}. Run `minutes setup --parakeet` for the guided install path.",
-                problems.join(", ")
-            )
-        };
-
-        return HealthItem {
-            label: "Speech model".into(),
-            state: if all_ready { "ready" } else { "attention" }.into(),
-            detail,
-            optional: false,
-        };
+        return crate::transcription_coordinator::parakeet_health_item(config);
     }
 
     let model_name = &config.transcription.model;
@@ -481,6 +418,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "parakeet")]
     fn test_parakeet_model_status_ready_with_metadata() {
         let tmp = tempfile::TempDir::new().unwrap();
         let mut config = Config::default();

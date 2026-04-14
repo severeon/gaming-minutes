@@ -1,8 +1,12 @@
-use crate::config::Config;
+use crate::config::{Config, VALID_PARAKEET_MODELS};
 use crate::error::TranscribeError;
+use crate::health::HealthItem;
 use crate::markdown::ContentType;
+use crate::parakeet;
 use crate::transcribe::{self, TranscribeResult};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use whisper_guard::segments as wg_segments;
 
@@ -10,6 +14,62 @@ use whisper_guard::segments as wg_segments;
 pub struct TranscriptionRequest {
     pub audio_path: PathBuf,
     pub content_type: ContentType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParakeetBackendStatus {
+    pub backend_id: String,
+    pub compiled: bool,
+    pub model: String,
+    pub warm: bool,
+    pub ready: bool,
+    pub binary: String,
+    pub binary_found: bool,
+    pub model_found: bool,
+    pub tokenizer_found: bool,
+    pub binary_path: Option<String>,
+    pub model_path: Option<String>,
+    pub tokenizer_path: Option<String>,
+    pub tokenizer_label: Option<String>,
+    pub install_dir: String,
+    pub setup_command: String,
+    pub guide_url: String,
+    pub issues: Vec<String>,
+    pub metadata: Option<parakeet::ParakeetInstallMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendWarmupResult {
+    pub backend_id: String,
+    pub model: String,
+    pub elapsed_ms: u64,
+    pub used_gpu: bool,
+}
+
+fn warmed_backends() -> &'static Mutex<std::collections::HashSet<String>> {
+    static WARMED: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    WARMED.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+fn warm_key(backend_id: &str, model: &str) -> String {
+    format!("{backend_id}:{model}")
+}
+
+#[cfg(feature = "parakeet")]
+fn mark_backend_warm(backend_id: &str, model: &str) {
+    let mut warmed = warmed_backends()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    warmed.insert(warm_key(backend_id, model));
+}
+
+fn backend_is_warm(backend_id: &str, model: &str) -> bool {
+    let warmed = warmed_backends()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    warmed.contains(&warm_key(backend_id, model))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,4 +184,146 @@ pub fn transcribe_path_for_content(
         content_type,
     };
     transcribe_request(&request, config)
+}
+
+pub fn parakeet_guide_url() -> &'static str {
+    "https://github.com/silverstein/minutes/blob/main/docs/PARAKEET.md"
+}
+
+pub fn parakeet_setup_command(model: &str) -> String {
+    format!("minutes setup --parakeet --parakeet-model {}", model)
+}
+
+pub fn parakeet_backend_status(config: &Config) -> ParakeetBackendStatus {
+    let backend_id = "parakeet".to_string();
+    let compiled = cfg!(feature = "parakeet");
+    let binary = config.transcription.parakeet_binary.clone();
+    let model = config.transcription.parakeet_model.clone();
+    let binary_path = which::which(&binary).ok();
+    let resolved_model = parakeet::resolve_model_file(config, &model);
+    let resolved_tokenizer =
+        parakeet::resolve_tokenizer_file(config, &model, &config.transcription.parakeet_vocab);
+    let metadata = parakeet::read_install_metadata(config, &model);
+    let mut issues = Vec::new();
+
+    if !compiled {
+        issues.push("Parakeet support is not compiled into this build".to_string());
+    }
+    if !VALID_PARAKEET_MODELS.contains(&model.as_str()) {
+        issues.push(format!(
+            "unknown parakeet model '{}'. Valid: {}",
+            model,
+            VALID_PARAKEET_MODELS.join(", ")
+        ));
+    }
+    if binary_path.is_none() {
+        issues.push(format!("binary '{}' is not in PATH", binary));
+    }
+    if resolved_model.is_none() {
+        issues.push(format!("model assets for '{}' are not installed", model));
+    }
+    if resolved_tokenizer.is_none() {
+        issues.push("SentencePiece tokenizer is not installed".to_string());
+    }
+    if metadata.is_none() && resolved_model.is_some() && resolved_tokenizer.is_some() {
+        issues.push("install metadata is missing; rerun setup to persist provenance".to_string());
+    }
+
+    let tokenizer_label = resolved_tokenizer.as_ref().and_then(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_string())
+    });
+
+    ParakeetBackendStatus {
+        backend_id: backend_id.clone(),
+        compiled,
+        model: model.clone(),
+        warm: backend_is_warm(&backend_id, &model),
+        ready: compiled
+            && VALID_PARAKEET_MODELS.contains(&model.as_str())
+            && binary_path.is_some()
+            && resolved_model.is_some()
+            && resolved_tokenizer.is_some(),
+        binary,
+        binary_found: binary_path.is_some(),
+        model_found: resolved_model.is_some(),
+        tokenizer_found: resolved_tokenizer.is_some(),
+        binary_path: binary_path.map(|path| path.display().to_string()),
+        model_path: resolved_model.map(|path| path.display().to_string()),
+        tokenizer_path: resolved_tokenizer
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        tokenizer_label,
+        install_dir: parakeet::install_dir(config, &model).display().to_string(),
+        setup_command: parakeet_setup_command(&model),
+        guide_url: parakeet_guide_url().to_string(),
+        issues,
+        metadata,
+    }
+}
+
+pub fn parakeet_health_item(config: &Config) -> HealthItem {
+    let status = parakeet_backend_status(config);
+    let detail = if status.ready {
+        let metadata_suffix = if let Some(metadata) = status.metadata.as_ref() {
+            format!(
+                " Metadata: {} from {}. Warm: {}.",
+                metadata.source_artifact,
+                metadata.source_repo,
+                if status.warm { "yes" } else { "no" }
+            )
+        } else {
+            format!(
+                " Metadata missing; rerun `{}` after installing files to persist provenance. Warm: {}.",
+                status.setup_command,
+                if status.warm { "yes" } else { "no" }
+            )
+        };
+        format!(
+            "Parakeet {} ready. Model: {}. Tokenizer: {}.{}",
+            status.model,
+            status.model_path.as_deref().unwrap_or("unknown"),
+            status.tokenizer_path.as_deref().unwrap_or("unknown"),
+            metadata_suffix
+        )
+    } else {
+        format!(
+            "Parakeet not ready: {}. Run `{}` for the guided install path.",
+            status.issues.join(", "),
+            status.setup_command
+        )
+    };
+
+    HealthItem {
+        label: "Speech model".into(),
+        state: if status.ready { "ready" } else { "attention" }.into(),
+        detail,
+        optional: false,
+    }
+}
+
+pub fn warmup_active_backend(config: &Config) -> Result<BackendWarmupResult, TranscribeError> {
+    if config.transcription.engine != "parakeet" {
+        return Err(TranscribeError::EngineNotAvailable(
+            config.transcription.engine.clone(),
+        ));
+    }
+
+    #[cfg(feature = "parakeet")]
+    {
+        let stats = transcribe::warmup_parakeet(config)?;
+        mark_backend_warm("parakeet", &stats.model);
+        return Ok(BackendWarmupResult {
+            backend_id: "parakeet".into(),
+            model: stats.model,
+            elapsed_ms: stats.elapsed_ms,
+            used_gpu: stats.used_gpu,
+        });
+    }
+
+    #[cfg(not(feature = "parakeet"))]
+    {
+        Err(TranscribeError::EngineNotAvailable("parakeet".into()))
+    }
 }

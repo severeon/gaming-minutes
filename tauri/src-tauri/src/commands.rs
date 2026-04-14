@@ -54,104 +54,10 @@ pub struct AppState {
     pub palette_reopen_pending: Arc<AtomicBool>,
 }
 
-fn resolve_parakeet_model_asset(config: &Config) -> Option<PathBuf> {
-    minutes_core::parakeet::resolve_model_file(config, &config.transcription.parakeet_model)
-}
-
-fn resolve_parakeet_tokenizer_asset(config: &Config) -> Option<PathBuf> {
-    minutes_core::parakeet::resolve_tokenizer_file(
-        config,
-        &config.transcription.parakeet_model,
-        &config.transcription.parakeet_vocab,
-    )
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ParakeetStatusView {
-    compiled: bool,
-    model: String,
-    binary: String,
-    ready: bool,
-    binary_found: bool,
-    model_found: bool,
-    tokenizer_found: bool,
-    binary_path: Option<String>,
-    model_path: Option<String>,
-    tokenizer_path: Option<String>,
-    tokenizer_label: Option<String>,
-    install_dir: String,
-    setup_command: String,
-    guide_url: String,
-    issues: Vec<String>,
-    metadata: Option<minutes_core::parakeet::ParakeetInstallMetadata>,
-}
-
-fn parakeet_guide_url() -> &'static str {
-    "https://github.com/silverstein/minutes/blob/main/docs/PARAKEET.md"
-}
-
-fn parakeet_setup_command(model: &str) -> String {
-    format!("minutes setup --parakeet --parakeet-model {}", model)
-}
+type ParakeetStatusView = minutes_core::transcription_coordinator::ParakeetBackendStatus;
 
 fn parakeet_status_view(config: &Config) -> ParakeetStatusView {
-    let compiled = cfg!(feature = "parakeet");
-    let binary = config.transcription.parakeet_binary.clone();
-    let model = config.transcription.parakeet_model.clone();
-    let binary_path = which::which(&binary).ok();
-    let resolved_model = resolve_parakeet_model_asset(config);
-    let resolved_tokenizer = resolve_parakeet_tokenizer_asset(config);
-    let metadata = minutes_core::parakeet::read_install_metadata(config, &model);
-    let mut issues = Vec::new();
-
-    if !compiled {
-        issues.push("Parakeet support is not compiled into this build".to_string());
-    }
-    if binary_path.is_none() {
-        issues.push(format!("binary '{}' is not in PATH", binary));
-    }
-    if resolved_model.is_none() {
-        issues.push(format!("model assets for '{}' are not installed", model));
-    }
-    if resolved_tokenizer.is_none() {
-        issues.push("SentencePiece tokenizer is not installed".to_string());
-    }
-    if metadata.is_none() && resolved_model.is_some() && resolved_tokenizer.is_some() {
-        issues.push("install metadata is missing; rerun setup to persist provenance".to_string());
-    }
-
-    let tokenizer_label = resolved_tokenizer.as_ref().and_then(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| name.to_string())
-    });
-
-    ParakeetStatusView {
-        compiled,
-        model: model.clone(),
-        binary,
-        ready: compiled
-            && binary_path.is_some()
-            && resolved_model.is_some()
-            && resolved_tokenizer.is_some(),
-        binary_found: binary_path.is_some(),
-        model_found: resolved_model.is_some(),
-        tokenizer_found: resolved_tokenizer.is_some(),
-        binary_path: binary_path.map(|path| path.display().to_string()),
-        model_path: resolved_model.map(|path| path.display().to_string()),
-        tokenizer_path: resolved_tokenizer
-            .as_ref()
-            .map(|path| path.display().to_string()),
-        tokenizer_label,
-        install_dir: minutes_core::parakeet::install_dir(config, &model)
-            .display()
-            .to_string(),
-        setup_command: parakeet_setup_command(&model),
-        guide_url: parakeet_guide_url().to_string(),
-        issues,
-        metadata,
-    }
+    minutes_core::transcription_coordinator::parakeet_backend_status(config)
 }
 
 /// Lifecycle state for the palette overlay window.
@@ -5364,7 +5270,7 @@ pub async fn cmd_warm_parakeet() -> Result<serde_json::Value, String> {
     #[cfg(feature = "parakeet")]
     {
         let stats = tauri::async_runtime::spawn_blocking(move || {
-            minutes_core::transcribe::warmup_parakeet(&config)
+            minutes_core::transcription_coordinator::warmup_active_backend(&config)
         })
         .await
         .map_err(|error| format!("warmup task failed: {}", error))?
@@ -5372,6 +5278,7 @@ pub async fn cmd_warm_parakeet() -> Result<serde_json::Value, String> {
 
         return Ok(serde_json::json!({
             "status": "ok",
+            "backend_id": stats.backend_id,
             "model": stats.model,
             "elapsed_ms": stats.elapsed_ms,
             "used_gpu": stats.used_gpu,

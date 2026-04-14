@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 // ──────────────────────────────────────────────────────────────
@@ -505,6 +506,24 @@ fn minutes_dir() -> PathBuf {
     home_dir().join(".minutes")
 }
 
+fn config_base_dir_from(xdg_config_home: Option<OsString>, home: PathBuf) -> PathBuf {
+    match xdg_config_home {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ => home.join(".config"),
+    }
+}
+
+fn config_base_dir() -> PathBuf {
+    config_base_dir_from(std::env::var_os("XDG_CONFIG_HOME"), home_dir())
+}
+
+#[cfg(test)]
+fn config_path_from(xdg_config_home: Option<OsString>, home: PathBuf) -> PathBuf {
+    config_base_dir_from(xdg_config_home, home)
+        .join("minutes")
+        .join("config.toml")
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -626,24 +645,7 @@ impl Default for WatchConfig {
 impl Config {
     /// Standard config file location.
     pub fn config_path() -> PathBuf {
-        // Prefer ~/.config/minutes/ (Unix convention, documented in README)
-        let unix_path = home_dir()
-            .join(".config")
-            .join("minutes")
-            .join("config.toml");
-        if unix_path.exists() {
-            return unix_path;
-        }
-        // Fall back to platform-native (~/Library/Application Support/ on macOS)
-        let native_path = dirs::config_dir()
-            .unwrap_or_else(|| home_dir().join(".config"))
-            .join("minutes")
-            .join("config.toml");
-        if native_path.exists() {
-            return native_path;
-        }
-        // Default to Unix-standard path
-        unix_path
+        config_base_dir().join("minutes").join("config.toml")
     }
 
     /// Load config from file, falling back to defaults.
@@ -901,6 +903,32 @@ mod tests {
     fn missing_config_file_returns_defaults() {
         let config = Config::load_from(Path::new("/nonexistent/config.toml"));
         assert_eq!(config.transcription.model, "small");
+    }
+
+    #[test]
+    fn config_path_falls_back_to_home_dot_config_when_xdg_unset() {
+        let home = PathBuf::from("/tmp/test-home");
+        let path = config_path_from(None, home.clone());
+
+        assert_eq!(path, home.join(".config/minutes/config.toml"));
+    }
+
+    #[test]
+    fn config_path_uses_xdg_config_home_when_set() {
+        let path = config_path_from(
+            Some(OsString::from("/tmp/test-config")),
+            PathBuf::from("/tmp/test-home"),
+        );
+
+        assert_eq!(path, PathBuf::from("/tmp/test-config/minutes/config.toml"));
+    }
+
+    #[test]
+    fn config_path_falls_back_when_xdg_config_home_is_empty() {
+        let home = PathBuf::from("/tmp/test-home");
+        let path = config_path_from(Some(OsString::new()), home.clone());
+
+        assert_eq!(path, home.join(".config/minutes/config.toml"));
     }
 
     #[test]

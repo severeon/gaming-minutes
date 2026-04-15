@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Once;
 use thiserror::Error;
 
 pub const PARAKEET_SCHEMA_VERSION: u32 = 1;
@@ -245,8 +244,8 @@ pub fn resolve_parakeet_binary(
             ))),
             ResolveParakeetBinaryMode::WarnAndFallback => match auto_resolve_parakeet_binary() {
                 Ok((resolved, candidates_tried)) => {
-                    log_configured_fallback_once(configured_path, &resolved);
-                    log_auto_resolve_once(&candidates_tried, &resolved);
+                    log_configured_fallback(configured_path, &resolved);
+                    log_auto_resolve(&candidates_tried, &resolved);
                     Ok(resolved)
                 }
                 Err(auto_error) => Err(ResolveParakeetBinaryError::new(format!(
@@ -258,7 +257,7 @@ pub fn resolve_parakeet_binary(
     }
 
     let (resolved, candidates_tried) = auto_resolve_parakeet_binary()?;
-    log_auto_resolve_once(&candidates_tried, &resolved);
+    log_auto_resolve(&candidates_tried, &resolved);
     Ok(resolved)
 }
 
@@ -334,46 +333,34 @@ fn verify_parakeet_binary(path: &Path) -> Result<(), ()> {
     }
 }
 
-fn log_auto_resolve_once(candidates_tried: &[String], chosen_path: &Path) {
-    static LOG_ONCE: Once = Once::new();
-
+fn log_auto_resolve(candidates_tried: &[String], chosen_path: &Path) {
     let chosen_path = chosen_path.display().to_string();
-    let candidates_tried = candidates_tried.to_vec();
-
-    LOG_ONCE.call_once(move || {
-        tracing::info!(
-            step = "parakeet_resolve",
-            chosen_path = %chosen_path,
-            candidates_tried = ?candidates_tried,
-            "resolved parakeet binary"
-        );
-        crate::logging::log_step(
-            "parakeet_resolve",
-            &chosen_path,
-            0,
-            serde_json::json!({
-                "candidates_tried": candidates_tried,
-                "chosen_path": chosen_path,
-            }),
-        );
-    });
+    tracing::info!(
+        step = "parakeet_resolve",
+        chosen_path = %chosen_path,
+        candidates_tried = ?candidates_tried,
+        "resolved parakeet binary"
+    );
+    crate::logging::log_step(
+        "parakeet_resolve",
+        &chosen_path,
+        0,
+        serde_json::json!({
+            "candidates_tried": candidates_tried,
+            "chosen_path": chosen_path,
+        }),
+    );
 }
 
-fn log_configured_fallback_once(configured_path: &str, resolved_path: &Path) {
-    static WARN_ONCE: Once = Once::new();
-
-    let configured_path = configured_path.to_string();
+fn log_configured_fallback(configured_path: &str, resolved_path: &Path) {
     let resolved_path = resolved_path.display().to_string();
-
-    WARN_ONCE.call_once(move || {
-        tracing::warn!(
-            configured_path = %configured_path,
-            found_path = %resolved_path,
-            "configured parakeet_binary at {} is not executable; auto-resolving to {}. Update your config to silence this warning.",
-            configured_path,
-            resolved_path
-        );
-    });
+    tracing::warn!(
+        configured_path = %configured_path,
+        found_path = %resolved_path,
+        "configured parakeet_binary at {} is not executable; auto-resolving to {}. Update your config to silence this warning.",
+        configured_path,
+        resolved_path
+    );
 }
 
 // ── Word-to-sentence grouping ───────────────────────────────────

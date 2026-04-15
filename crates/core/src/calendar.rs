@@ -17,6 +17,8 @@ use chrono::{DateTime, Datelike, Local, Timelike};
 /// Calendar queries should complete in <1s when Calendar.app is healthy.
 /// 3s is generous enough for slow CalDAV syncs but doesn't freeze the app.
 const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(3);
+const EVENTKIT_OVERLAP_LOOKAHEAD_MINUTES: u32 = 120;
+const EVENTKIT_OVERLAP_LOOKBACK_MINUTES: u32 = 120;
 
 /// Run a Command with a timeout. Returns None if the process hangs or fails to start.
 ///
@@ -182,6 +184,10 @@ pub fn events_overlapping(at: DateTime<Local>) -> Vec<CalendarEvent> {
             return events_overlapping_now();
         }
 
+        if let Some(events) = query_overlap_via_eventkit(Some(at.timestamp())) {
+            return events;
+        }
+
         query_events_with_attendees_at(at)
     }
 }
@@ -195,7 +201,7 @@ pub fn events_overlapping_now() -> Vec<CalendarEvent> {
     {
         // Try EventKit helper first (sub-second, no CalDAV round-trips).
         // Pass lookahead=120, lookback=120 for a 4-hour window centered on now.
-        if let Some(events) = query_overlap_via_eventkit() {
+        if let Some(events) = query_overlap_via_eventkit(None) {
             return events;
         }
         // AppleScript fallback: only reached when EventKit helper is missing
@@ -370,11 +376,28 @@ fn query_via_eventkit(lookahead_minutes: u32) -> Option<Vec<CalendarEvent>> {
 
 /// Query overlapping events via EventKit helper with a backward+forward window.
 /// Returns None if the helper is missing or fails (triggers AppleScript fallback).
-fn query_overlap_via_eventkit() -> Option<Vec<CalendarEvent>> {
+fn query_overlap_via_eventkit(reference_epoch_seconds: Option<i64>) -> Option<Vec<CalendarEvent>> {
     let helper = find_calendar_helper()?;
+    query_overlap_via_eventkit_with_helper(&helper, reference_epoch_seconds)
+}
 
-    let mut cmd = Command::new(&helper);
-    cmd.arg("120").arg("120"); // lookahead=120min, lookback=120min
+fn query_overlap_via_eventkit_with_helper(
+    helper: &std::path::Path,
+    reference_epoch_seconds: Option<i64>,
+) -> Option<Vec<CalendarEvent>> {
+    tracing::info!(
+        lookahead_minutes = EVENTKIT_OVERLAP_LOOKAHEAD_MINUTES,
+        lookback_minutes = EVENTKIT_OVERLAP_LOOKBACK_MINUTES,
+        reference_epoch_seconds,
+        "querying calendar overlap via EventKit helper"
+    );
+
+    let mut cmd = Command::new(helper);
+    cmd.arg(EVENTKIT_OVERLAP_LOOKAHEAD_MINUTES.to_string())
+        .arg(EVENTKIT_OVERLAP_LOOKBACK_MINUTES.to_string());
+    if let Some(reference_epoch_seconds) = reference_epoch_seconds {
+        cmd.arg(reference_epoch_seconds.to_string());
+    }
     let output = output_with_timeout(cmd, SUBPROCESS_TIMEOUT)?;
 
     if !output.status.success() {
@@ -493,6 +516,7 @@ return output"#,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn extract_zoom_url() {
@@ -544,5 +568,52 @@ mod tests {
             extract_meeting_url(text),
             Some("https://us02web.zoom.us/j/8765432?pwd=xyz".to_string())
         );
+    }
+
+    #[test]
+    fn query_overlap_via_eventkit_passes_reference_timestamp() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let helper_path = tempdir.path().join("calendar-events");
+        let args_path = tempdir.path().join("args.txt");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
+            args_path.display()
+        );
+        std::fs::write(&helper_path, script).unwrap();
+        let mut permissions = std::fs::metadata(&helper_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&helper_path, permissions).unwrap();
+
+        let events = query_overlap_via_eventkit_with_helper(&helper_path, Some(1_700_000_000))
+            .expect("helper should run");
+        assert!(events.is_empty());
+
+        let args = std::fs::read_to_string(&args_path).unwrap();
+        assert_eq!(
+            args.lines().collect::<Vec<_>>(),
+            ["120", "120", "1700000000"]
+        );
+    }
+
+    #[test]
+    fn query_overlap_via_eventkit_omits_reference_timestamp_when_not_provided() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let helper_path = tempdir.path().join("calendar-events");
+        let args_path = tempdir.path().join("args.txt");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
+            args_path.display()
+        );
+        std::fs::write(&helper_path, script).unwrap();
+        let mut permissions = std::fs::metadata(&helper_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&helper_path, permissions).unwrap();
+
+        let events =
+            query_overlap_via_eventkit_with_helper(&helper_path, None).expect("helper should run");
+        assert!(events.is_empty());
+
+        let args = std::fs::read_to_string(&args_path).unwrap();
+        assert_eq!(args.lines().collect::<Vec<_>>(), ["120", "120"]);
     }
 }

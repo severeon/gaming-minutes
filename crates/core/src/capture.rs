@@ -1420,6 +1420,8 @@ pub fn record_to_wav(
     if let Some(handle) = sidecar_handle {
         handle.join().ok();
     }
+    #[cfg(all(feature = "whisper", feature = "streaming"))]
+    crate::live_transcript::clear_status_file();
     let sidecar_drops = SIDECAR_DROPS.swap(0, Ordering::Relaxed);
     if sidecar_drops > 0 {
         tracing::warn!(

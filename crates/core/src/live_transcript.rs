@@ -11,6 +11,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 // ──────────────────────────────────────────────────────────────
 // Live transcript pipeline:
@@ -79,6 +80,9 @@ pub struct SessionStatus {
     /// How the transcript is being produced (standalone or recording sidecar).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<TranscriptSource>,
+    /// Diagnostic detail when a transcript session is degraded or unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
 }
 
 /// Manages writing the JSONL and optional WAV file during a live session.
@@ -91,17 +95,35 @@ struct LiveTranscriptWriter {
     jsonl_path: PathBuf,
     jsonl_failed: bool,
     wav_failed: bool,
+    last_status_write: Instant,
 }
 
 /// Lightweight sidecar written atomically on each utterance.
 /// Status readers check this instead of reparsing the full JSONL.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum LiveStatusState {
+    Starting,
+    Healthy,
+    Failed,
+    Stopped,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveStatus {
     pub start_time: DateTime<Local>,
+    pub updated_at: DateTime<Local>,
+    pub state: LiveStatusState,
     pub line_count: usize,
     pub last_offset_ms: u64,
     pub last_duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
 }
+
+const SIDECAR_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+const SIDECAR_HEALTH_STALE_AFTER_SECS: i64 = 3;
+const SIDECAR_STARTUP_TIMEOUT_SECS: i64 = 10;
 
 impl LiveTranscriptWriter {
     fn new(config: &Config) -> Result<Self, MinutesError> {
@@ -150,28 +172,45 @@ impl LiveTranscriptWriter {
             jsonl_path,
             jsonl_failed: false,
             wav_failed: false,
+            last_status_write: Instant::now()
+                .checked_sub(SIDECAR_HEARTBEAT_INTERVAL)
+                .unwrap_or_else(Instant::now),
         };
-
-        // Write initial sidecar status
-        writer.write_sidecar();
 
         Ok(writer)
     }
 
-    /// Write the lightweight sidecar status file (atomic rename).
-    fn write_sidecar(&self) {
+    /// Write the lightweight status file (atomic rename).
+    fn write_status(
+        &mut self,
+        state: LiveStatusState,
+        last_duration_ms: u64,
+        diagnostic: Option<&str>,
+    ) {
         let status = LiveStatus {
             start_time: self.start_wall,
+            updated_at: Local::now(),
+            state,
             line_count: self.line_count,
             last_offset_ms: self.start_time.elapsed().as_millis() as u64,
-            last_duration_ms: 0,
+            last_duration_ms,
+            diagnostic: diagnostic.map(str::to_string),
         };
-        let path = pid::live_transcript_status_path();
-        let tmp = path.with_extension("json.tmp");
-        if let Ok(json) = serde_json::to_string(&status) {
-            if std::fs::write(&tmp, json).is_ok() {
-                std::fs::rename(&tmp, &path).ok();
-            }
+        write_live_status(&status);
+        self.last_status_write = Instant::now();
+    }
+
+    fn mark_healthy(&mut self) {
+        self.write_status(LiveStatusState::Healthy, 0, None);
+    }
+
+    fn mark_stopped(&mut self) {
+        self.write_status(LiveStatusState::Stopped, 0, None);
+    }
+
+    fn maybe_write_heartbeat(&mut self) {
+        if self.last_status_write.elapsed() >= SIDECAR_HEARTBEAT_INTERVAL {
+            self.write_status(LiveStatusState::Healthy, 0, None);
         }
     }
 
@@ -213,7 +252,7 @@ impl LiveTranscriptWriter {
             }
         }
         // Update sidecar after each successful write
-        self.write_sidecar();
+        self.write_status(LiveStatusState::Healthy, line.duration_ms, None);
         true
     }
 
@@ -236,6 +275,7 @@ impl LiveTranscriptWriter {
 
     /// Finalize the WAV file and return session summary.
     fn finalize(mut self) -> (usize, f64, PathBuf) {
+        self.mark_stopped();
         if let Some(writer) = self.wav_writer.take() {
             if let Err(e) = writer.finalize() {
                 tracing::warn!("WAV finalize failed: {}", e);
@@ -279,6 +319,7 @@ pub fn run(
     })?;
 
     // Guard holds the flock — dropped when this function returns, cleaning up the PID file
+    write_live_status_transition(LiveStatusState::Starting, None);
     run_inner(stop_flag, config)
 }
 
@@ -314,6 +355,7 @@ fn run_inner(
 
     // Only now create the writer (which truncates the JSONL and WAV files)
     let mut writer = LiveTranscriptWriter::new(config)?;
+    writer.mark_healthy();
 
     let mut vad = Vad::new();
     let mut streaming = StreamingWhisper::new(config.transcription.language.clone());
@@ -325,6 +367,7 @@ fn run_inner(
     tracing::info!("live transcript session started");
 
     loop {
+        writer.maybe_write_heartbeat();
         // Check stop flag
         if stop_flag.load(Ordering::Relaxed) {
             // Finalize any in-progress utterance
@@ -452,7 +495,7 @@ fn run_inner(
     }
 
     let (lines, duration, path) = writer.finalize();
-    remove_status_file();
+    clear_status_file();
     tracing::info!(
         lines = lines,
         duration_secs = format!("{:.1}", duration),
@@ -493,14 +536,30 @@ pub fn run_sidecar_mpsc(
     stop_flag: Arc<AtomicBool>,
     config: &Config,
 ) {
-    if let Err(e) = run_sidecar_inner_mpsc(rx, stop_flag, config) {
-        eprintln!(
-            "[minutes] Live transcript unavailable: {} — recording continues without real-time transcript",
-            e
-        );
-        tracing::warn!("live sidecar stopped: {}", e);
-        // Clean up status file so session_status() doesn't report a dead sidecar as active
-        remove_status_file();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_sidecar_inner_mpsc(rx, stop_flag, config)
+    }));
+
+    match outcome {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let message = format!("{}", e);
+            eprintln!(
+                "[minutes] Live transcript unavailable: {} — recording continues without real-time transcript",
+                message
+            );
+            tracing::warn!("live sidecar stopped: {}", message);
+            write_live_status_transition(LiveStatusState::Failed, Some(message.as_str()));
+        }
+        Err(payload) => {
+            let message = panic_payload_to_string(payload.as_ref());
+            eprintln!(
+                "[minutes] Live transcript unavailable: {} — recording continues without real-time transcript",
+                message
+            );
+            tracing::error!("live sidecar panicked: {}", message);
+            write_live_status_transition(LiveStatusState::Failed, Some(message.as_str()));
+        }
     }
 }
 
@@ -518,6 +577,8 @@ fn run_sidecar_inner_mpsc(
         tracing::info!("standalone live transcript active — skipping recording sidecar");
         return Ok(());
     }
+
+    write_live_status_transition(LiveStatusState::Starting, None);
 
     let whisper_ctx = {
         let model_path = if config.live_transcript.model.is_empty() {
@@ -538,6 +599,7 @@ fn run_sidecar_inner_mpsc(
     let mut sidecar_config = config.clone();
     sidecar_config.live_transcript.save_wav = false;
     let mut writer = LiveTranscriptWriter::new(&sidecar_config)?;
+    writer.mark_healthy();
 
     let mut vad = Vad::new();
     let mut streaming = StreamingWhisper::new(config.transcription.language.clone());
@@ -549,6 +611,7 @@ fn run_sidecar_inner_mpsc(
     tracing::info!("live sidecar started (recording mode)");
 
     loop {
+        writer.maybe_write_heartbeat();
         if stop_flag.load(Ordering::Relaxed) {
             if utterance_samples > 0 {
                 if let Some(sr) = streaming.finalize(&whisper_ctx) {
@@ -609,7 +672,7 @@ fn run_sidecar_inner_mpsc(
 
     let (lines, duration, _path) = writer.finalize();
     // Clean up status file so session_status() doesn't report stale data
-    remove_status_file();
+    clear_status_file();
     tracing::info!(
         lines = lines,
         duration_secs = format!("{:.1}", duration),
@@ -700,65 +763,46 @@ pub fn session_status() -> SessionStatus {
     let lt_pid = pid::live_transcript_pid_path();
     let lt_process_pid = pid::check_pid_file(&lt_pid).ok().flatten();
 
-    let recording_pid_path = pid::pid_path();
     let recording_pid = pid::check_recording().ok().flatten();
     let status_path = pid::live_transcript_status_path();
     let jsonl_path = pid::live_transcript_jsonl_path();
 
-    derive_session_status(
-        lt_process_pid,
-        recording_pid,
-        &recording_pid_path,
-        &status_path,
-        &jsonl_path,
-    )
+    derive_session_status(lt_process_pid, recording_pid, &status_path, &jsonl_path)
 }
 
 fn derive_session_status(
     lt_process_pid: Option<u32>,
     recording_pid: Option<u32>,
-    recording_pid_path: &Path,
     status_path: &Path,
     jsonl_path: &Path,
 ) -> SessionStatus {
     let live_status = read_live_status(status_path);
-    #[cfg(all(feature = "whisper", feature = "streaming"))]
-    let sidecar_active = recording_pid.is_some()
-        && (live_status.is_some()
-            || recording_sidecar_jsonl_looks_current(recording_pid_path, jsonl_path));
-    #[cfg(not(all(feature = "whisper", feature = "streaming")))]
-    let sidecar_active = false;
+    let now = Local::now();
+    let standalone_active = lt_process_pid.is_some();
 
-    let active = lt_process_pid.is_some() || sidecar_active;
-    let pid = lt_process_pid.or(if sidecar_active { recording_pid } else { None });
-
-    // Read stats from status file or JSONL. Only report non-zero values when
-    // a session is active — otherwise stale files would leak old data.
-    let (line_count, duration_secs) = if active {
-        if let Some(status) = live_status {
-            let elapsed = (Local::now() - status.start_time).num_seconds().max(0) as f64;
-            (status.line_count, elapsed)
-        } else {
-            // Fallback: no status file, parse JSONL
-            let lines = if jsonl_path.exists() {
-                read_since_line_from_path(jsonl_path, 0).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            let count = lines.len();
-            let dur = lines
-                .last()
-                .map(|l| (l.offset_ms + l.duration_ms) as f64 / 1000.0)
-                .unwrap_or(0.0);
-            (count, dur)
-        }
+    let (sidecar_active, diagnostic) = if recording_pid.is_some() {
+        evaluate_recording_sidecar_status(live_status.as_ref(), now)
     } else {
-        // Inactive — report zeros. The JSONL file may still exist from a
-        // previous session, but its stats are not relevant.
+        (false, None)
+    };
+
+    let active = standalone_active || sidecar_active;
+    let pid = if standalone_active {
+        lt_process_pid
+    } else if sidecar_active {
+        recording_pid
+    } else {
+        None
+    };
+
+    let should_report_stats = standalone_active || recording_pid.is_some();
+    let (line_count, duration_secs) = if should_report_stats {
+        status_metrics(live_status.as_ref(), jsonl_path, now)
+    } else {
         (0, 0.0)
     };
 
-    let source = if lt_process_pid.is_some() {
+    let source = if standalone_active {
         Some(TranscriptSource::Standalone)
     } else if sidecar_active {
         Some(TranscriptSource::RecordingSidecar)
@@ -777,26 +821,7 @@ fn derive_session_status(
             None
         },
         source,
-    }
-}
-
-fn recording_sidecar_jsonl_looks_current(recording_pid_path: &Path, jsonl_path: &Path) -> bool {
-    if !jsonl_path.exists() {
-        return false;
-    }
-
-    let recording_started_at = std::fs::metadata(recording_pid_path)
-        .and_then(|meta| meta.modified())
-        .ok();
-    let jsonl_modified_at = std::fs::metadata(jsonl_path)
-        .and_then(|meta| meta.modified())
-        .ok();
-
-    match (recording_started_at, jsonl_modified_at) {
-        (Some(recording_started_at), Some(jsonl_modified_at)) => {
-            jsonl_modified_at >= recording_started_at
-        }
-        _ => false,
+        diagnostic,
     }
 }
 
@@ -804,6 +829,112 @@ fn read_live_status(path: &Path) -> Option<LiveStatus> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|content| serde_json::from_str::<LiveStatus>(&content).ok())
+}
+
+fn write_live_status(status: &LiveStatus) {
+    let path = pid::live_transcript_status_path();
+    let tmp = path.with_extension("json.tmp");
+    if let Ok(json) = serde_json::to_string(status) {
+        if std::fs::write(&tmp, json).is_ok() {
+            std::fs::rename(&tmp, &path).ok();
+        }
+    }
+}
+
+fn write_live_status_transition(state: LiveStatusState, diagnostic: Option<&str>) {
+    let now = Local::now();
+    let existing = read_live_status(&pid::live_transcript_status_path());
+    let status = LiveStatus {
+        start_time: existing.as_ref().map(|s| s.start_time).unwrap_or(now),
+        updated_at: now,
+        state,
+        line_count: existing.as_ref().map(|s| s.line_count).unwrap_or(0),
+        last_offset_ms: existing.as_ref().map(|s| s.last_offset_ms).unwrap_or(0),
+        last_duration_ms: existing.as_ref().map(|s| s.last_duration_ms).unwrap_or(0),
+        diagnostic: diagnostic.map(str::to_string),
+    };
+    write_live_status(&status);
+}
+
+fn evaluate_recording_sidecar_status(
+    live_status: Option<&LiveStatus>,
+    now: DateTime<Local>,
+) -> (bool, Option<String>) {
+    let Some(status) = live_status else {
+        return (false, Some("sidecar status unavailable".into()));
+    };
+
+    match status.state {
+        LiveStatusState::Healthy => {
+            let age = (now - status.updated_at).num_seconds().max(0);
+            if age > SIDECAR_HEALTH_STALE_AFTER_SECS {
+                (false, Some("sidecar heartbeat stale".into()))
+            } else {
+                (true, None)
+            }
+        }
+        LiveStatusState::Starting => {
+            let age = (now - status.start_time).num_seconds().max(0);
+            if age > SIDECAR_STARTUP_TIMEOUT_SECS {
+                (false, Some("sidecar still starting".into()))
+            } else {
+                (false, Some("sidecar starting".into()))
+            }
+        }
+        LiveStatusState::Failed => (
+            false,
+            Some(
+                status
+                    .diagnostic
+                    .clone()
+                    .filter(|msg| !msg.trim().is_empty())
+                    .unwrap_or_else(|| "sidecar failed".into()),
+            ),
+        ),
+        LiveStatusState::Stopped => (
+            false,
+            Some(
+                status
+                    .diagnostic
+                    .clone()
+                    .filter(|msg| !msg.trim().is_empty())
+                    .unwrap_or_else(|| "sidecar stopped".into()),
+            ),
+        ),
+    }
+}
+
+fn status_metrics(
+    live_status: Option<&LiveStatus>,
+    jsonl_path: &Path,
+    now: DateTime<Local>,
+) -> (usize, f64) {
+    if let Some(status) = live_status {
+        let elapsed = (now - status.start_time).num_seconds().max(0) as f64;
+        return (status.line_count, elapsed);
+    }
+
+    let lines = if jsonl_path.exists() {
+        read_since_line_from_path(jsonl_path, 0).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let count = lines.len();
+    let dur = lines
+        .last()
+        .map(|l| (l.offset_ms + l.duration_ms) as f64 / 1000.0)
+        .unwrap_or(0.0);
+    (count, dur)
+}
+
+fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        format!("sidecar panicked: {}", message)
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        format!("sidecar panicked: {}", message)
+    } else {
+        "sidecar panicked".into()
+    }
 }
 
 fn set_permissions_0600(path: &std::path::Path) {
@@ -815,7 +946,7 @@ fn set_permissions_0600(path: &std::path::Path) {
 }
 
 /// Remove the status file so `session_status()` won't report stale data.
-fn remove_status_file() {
+pub fn clear_status_file() {
     std::fs::remove_file(pid::live_transcript_status_path()).ok();
 }
 
@@ -824,8 +955,21 @@ fn remove_status_file() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration as ChronoDuration;
     use std::io::Write;
     use tempfile::{tempdir, NamedTempFile};
+
+    fn live_status_with_state(state: LiveStatusState) -> LiveStatus {
+        LiveStatus {
+            start_time: Local::now(),
+            updated_at: Local::now(),
+            state,
+            line_count: 3,
+            last_offset_ms: 1200,
+            last_duration_ms: 400,
+            diagnostic: None,
+        }
+    }
 
     #[test]
     fn test_transcript_line_roundtrip() {
@@ -903,14 +1047,11 @@ mod tests {
 
     #[cfg(all(feature = "whisper", feature = "streaming"))]
     #[test]
-    fn sidecar_requires_live_status_file_to_report_active() {
+    fn sidecar_missing_status_is_inactive_with_diagnostic() {
         let dir = tempdir().unwrap();
-        let recording_pid_path = dir.path().join("recording.pid");
-        std::fs::write(&recording_pid_path, "123").unwrap();
         let status = derive_session_status(
             None,
             Some(std::process::id()),
-            &recording_pid_path,
             &dir.path().join("live-status.json"),
             &dir.path().join("live.jsonl"),
         );
@@ -918,27 +1059,23 @@ mod tests {
         assert!(!status.active);
         assert_eq!(status.source, None);
         assert_eq!(status.pid, None);
+        assert_eq!(
+            status.diagnostic.as_deref(),
+            Some("sidecar status unavailable")
+        );
     }
 
     #[cfg(all(feature = "whisper", feature = "streaming"))]
     #[test]
-    fn sidecar_reports_active_when_recording_pid_and_status_file_exist() {
+    fn sidecar_reports_active_when_healthy_and_recording_is_active() {
         let dir = tempdir().unwrap();
-        let recording_pid_path = dir.path().join("recording.pid");
-        std::fs::write(&recording_pid_path, "123").unwrap();
         let status_path = dir.path().join("live-status.json");
-        let status = LiveStatus {
-            start_time: Local::now(),
-            line_count: 3,
-            last_offset_ms: 1200,
-            last_duration_ms: 400,
-        };
+        let status = live_status_with_state(LiveStatusState::Healthy);
         std::fs::write(&status_path, serde_json::to_string(&status).unwrap()).unwrap();
 
         let status = derive_session_status(
             None,
             Some(std::process::id()),
-            &recording_pid_path,
             &status_path,
             &dir.path().join("live.jsonl"),
         );
@@ -947,76 +1084,158 @@ mod tests {
         assert_eq!(status.source, Some(TranscriptSource::RecordingSidecar));
         assert_eq!(status.pid, Some(std::process::id()));
         assert_eq!(status.line_count, 3);
+        assert_eq!(status.diagnostic, None);
     }
 
     #[cfg(all(feature = "whisper", feature = "streaming"))]
     #[test]
-    fn sidecar_reports_active_when_jsonl_is_newer_than_recording_pid() {
+    fn sidecar_failed_state_overrides_active_recording() {
         let dir = tempdir().unwrap();
-        let recording_pid_path = dir.path().join("recording.pid");
-        let jsonl_path = dir.path().join("live.jsonl");
-        std::fs::write(&recording_pid_path, "123").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        std::fs::write(
-            &jsonl_path,
-            serde_json::to_string(&TranscriptLine {
-                line: 1,
-                ts: Local::now(),
-                offset_ms: 0,
-                duration_ms: 500,
-                text: "hello".into(),
-                speaker: None,
-            })
-            .unwrap()
-                + "\n",
-        )
-        .unwrap();
+        let status_path = dir.path().join("live-status.json");
+        let mut status = live_status_with_state(LiveStatusState::Failed);
+        status.diagnostic = Some("sidecar failed".into());
+        std::fs::write(&status_path, serde_json::to_string(&status).unwrap()).unwrap();
 
         let status = derive_session_status(
             None,
             Some(std::process::id()),
-            &recording_pid_path,
-            &dir.path().join("live-status.json"),
-            &jsonl_path,
-        );
-
-        assert!(status.active);
-        assert_eq!(status.source, Some(TranscriptSource::RecordingSidecar));
-        assert_eq!(status.line_count, 1);
-    }
-
-    #[cfg(all(feature = "whisper", feature = "streaming"))]
-    #[test]
-    fn sidecar_stays_inactive_for_stale_jsonl_from_before_recording() {
-        let dir = tempdir().unwrap();
-        let recording_pid_path = dir.path().join("recording.pid");
-        let jsonl_path = dir.path().join("live.jsonl");
-        std::fs::write(
-            &jsonl_path,
-            serde_json::to_string(&TranscriptLine {
-                line: 1,
-                ts: Local::now(),
-                offset_ms: 0,
-                duration_ms: 500,
-                text: "old".into(),
-                speaker: None,
-            })
-            .unwrap()
-                + "\n",
-        )
-        .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        std::fs::write(&recording_pid_path, "123").unwrap();
-
-        let status = derive_session_status(
-            None,
-            Some(std::process::id()),
-            &recording_pid_path,
-            &dir.path().join("live-status.json"),
-            &jsonl_path,
+            &status_path,
+            &dir.path().join("live.jsonl"),
         );
 
         assert!(!status.active);
         assert_eq!(status.source, None);
+        assert_eq!(status.diagnostic.as_deref(), Some("sidecar failed"));
+    }
+
+    #[cfg(all(feature = "whisper", feature = "streaming"))]
+    #[test]
+    fn sidecar_starting_state_is_not_ready() {
+        let dir = tempdir().unwrap();
+        let status_path = dir.path().join("live-status.json");
+        let status = live_status_with_state(LiveStatusState::Starting);
+        std::fs::write(&status_path, serde_json::to_string(&status).unwrap()).unwrap();
+
+        let status = derive_session_status(
+            None,
+            Some(std::process::id()),
+            &status_path,
+            &dir.path().join("live.jsonl"),
+        );
+
+        assert!(!status.active);
+        assert_eq!(status.source, None);
+        assert_eq!(status.diagnostic.as_deref(), Some("sidecar starting"));
+    }
+
+    #[cfg(all(feature = "whisper", feature = "streaming"))]
+    #[test]
+    fn sidecar_long_startup_is_degraded() {
+        let dir = tempdir().unwrap();
+        let status_path = dir.path().join("live-status.json");
+        let mut status = live_status_with_state(LiveStatusState::Starting);
+        status.start_time =
+            Local::now() - ChronoDuration::seconds(SIDECAR_STARTUP_TIMEOUT_SECS + 1);
+        status.updated_at = status.start_time;
+        std::fs::write(&status_path, serde_json::to_string(&status).unwrap()).unwrap();
+
+        let status = derive_session_status(
+            None,
+            Some(std::process::id()),
+            &status_path,
+            &dir.path().join("live.jsonl"),
+        );
+
+        assert!(!status.active);
+        assert_eq!(status.diagnostic.as_deref(), Some("sidecar still starting"));
+    }
+
+    #[cfg(all(feature = "whisper", feature = "streaming"))]
+    #[test]
+    fn stale_healthy_sidecar_is_treated_as_inactive() {
+        let dir = tempdir().unwrap();
+        let status_path = dir.path().join("live-status.json");
+        let mut status = live_status_with_state(LiveStatusState::Healthy);
+        status.updated_at =
+            Local::now() - ChronoDuration::seconds(SIDECAR_HEALTH_STALE_AFTER_SECS + 1);
+        std::fs::write(&status_path, serde_json::to_string(&status).unwrap()).unwrap();
+
+        let status = derive_session_status(
+            None,
+            Some(std::process::id()),
+            &status_path,
+            &dir.path().join("live.jsonl"),
+        );
+
+        assert!(!status.active);
+        assert_eq!(
+            status.diagnostic.as_deref(),
+            Some("sidecar heartbeat stale")
+        );
+    }
+
+    #[cfg(all(feature = "whisper", feature = "streaming"))]
+    #[test]
+    fn stale_status_file_is_ignored_when_recording_is_stopped() {
+        let dir = tempdir().unwrap();
+        let status_path = dir.path().join("live-status.json");
+        let status = live_status_with_state(LiveStatusState::Failed);
+        std::fs::write(&status_path, serde_json::to_string(&status).unwrap()).unwrap();
+
+        let status =
+            derive_session_status(None, None, &status_path, &dir.path().join("live.jsonl"));
+
+        assert!(!status.active);
+        assert_eq!(status.line_count, 0);
+        assert_eq!(status.duration_secs, 0.0);
+        assert_eq!(status.diagnostic, None);
+    }
+
+    #[cfg(all(feature = "whisper", feature = "streaming"))]
+    #[test]
+    fn trace_sidecar_transition_when_it_fails_mid_recording() {
+        let dir = tempdir().unwrap();
+        let status_path = dir.path().join("live-status.json");
+        let mut healthy = live_status_with_state(LiveStatusState::Healthy);
+        healthy.line_count = 7;
+        std::fs::write(&status_path, serde_json::to_string(&healthy).unwrap()).unwrap();
+
+        let healthy_status = derive_session_status(
+            None,
+            Some(std::process::id()),
+            &status_path,
+            &dir.path().join("live.jsonl"),
+        );
+        println!(
+            "healthy => active={}, source={:?}, diagnostic={:?}, lines={}",
+            healthy_status.active,
+            healthy_status.source,
+            healthy_status.diagnostic,
+            healthy_status.line_count
+        );
+
+        let mut failed = healthy.clone();
+        failed.state = LiveStatusState::Failed;
+        failed.updated_at = Local::now();
+        failed.diagnostic = Some("sidecar failed".into());
+        std::fs::write(&status_path, serde_json::to_string(&failed).unwrap()).unwrap();
+
+        let failed_status = derive_session_status(
+            None,
+            Some(std::process::id()),
+            &status_path,
+            &dir.path().join("live.jsonl"),
+        );
+        println!(
+            "failed => active={}, source={:?}, diagnostic={:?}, lines={}",
+            failed_status.active,
+            failed_status.source,
+            failed_status.diagnostic,
+            failed_status.line_count
+        );
+
+        assert!(healthy_status.active);
+        assert!(!failed_status.active);
+        assert_eq!(failed_status.diagnostic.as_deref(), Some("sidecar failed"));
     }
 }

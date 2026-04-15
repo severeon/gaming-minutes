@@ -5668,6 +5668,9 @@ fn cmd_transcript(since: Option<&str>, status: bool, format: &str) -> Result<()>
             }
             eprintln!("  Lines: {}", s.line_count);
             eprintln!("  Duration: {:.0}s", s.duration_secs);
+            if let Some(ref diagnostic) = s.diagnostic {
+                eprintln!("  Diagnostic: {}", diagnostic);
+            }
             if let Some(ref p) = s.jsonl_path {
                 eprintln!("  File: {}", p);
             }

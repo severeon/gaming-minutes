@@ -7071,6 +7071,8 @@ pub fn cmd_live_transcript_status(state: tauri::State<AppState>) -> serde_json::
         "line_count": status.line_count,
         "duration_secs": status.duration_secs,
         "audioLevel": audio_level,
+        "source": status.source,
+        "diagnostic": status.diagnostic,
     })
 }
 

@@ -17,6 +17,7 @@ pub mod markdown;
 pub mod notes;
 pub mod palette;
 pub mod parakeet;
+pub mod parakeet_sidecar;
 pub mod pid;
 pub mod pipeline;
 // Shared mono-downmix + decimation resampler (used by capture and streaming)

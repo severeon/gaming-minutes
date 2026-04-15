@@ -3,7 +3,10 @@ use crate::error::{LiveTranscriptError, MinutesError, TranscribeError};
 use crate::pid;
 use crate::streaming::AudioStream;
 use crate::streaming_whisper::StreamingWhisper;
+use crate::transcription_coordinator::{collapse_noise_markers, strip_foreign_script};
 use crate::vad::Vad;
+#[cfg(feature = "whisper")]
+use crate::vad::VadResult;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
@@ -67,6 +70,53 @@ pub enum TranscriptSource {
     /// Sidecar running alongside `minutes record`.
     #[serde(rename = "recording-sidecar")]
     RecordingSidecar,
+}
+
+pub const PARAKEET_SCOPE_DOC_REF: &str = "docs/PARAKEET.md#scope";
+pub const PARAKEET_RECORDING_LIVE_SCOPE_WARNING: &str =
+    "live transcription during recording still uses whisper (parakeet live streaming is not yet wired; see docs/PARAKEET.md#scope)";
+
+fn recording_sidecar_engine_scope_warning(engine: &str) -> Option<&'static str> {
+    if engine.eq_ignore_ascii_case("parakeet") && !recording_sidecar_supports_parakeet(engine) {
+        Some(PARAKEET_RECORDING_LIVE_SCOPE_WARNING)
+    } else {
+        None
+    }
+}
+
+fn recording_sidecar_supports_parakeet(engine: &str) -> bool {
+    #[cfg(feature = "parakeet")]
+    {
+        engine.eq_ignore_ascii_case("parakeet")
+    }
+
+    #[cfg(not(feature = "parakeet"))]
+    {
+        let _ = engine;
+        false
+    }
+}
+
+fn emit_recording_sidecar_engine_scope_warning(engine: &str) {
+    let Some(message) = recording_sidecar_engine_scope_warning(engine) else {
+        return;
+    };
+
+    eprintln!("[minutes] {}", message);
+    tracing::warn!(engine, "{}", message);
+    crate::logging::append_log(&serde_json::json!({
+        "ts": Local::now().to_rfc3339(),
+        "level": "warn",
+        "step": "live_transcript_scope",
+        "file": "",
+        "message": message,
+        "extra": {
+            "engine": engine,
+            "source": "recording-sidecar",
+            "doc_ref": PARAKEET_SCOPE_DOC_REF,
+        }
+    }))
+    .ok();
 }
 
 /// Status of the live transcript session.
@@ -217,9 +267,9 @@ impl LiveTranscriptWriter {
     /// Append a transcribed utterance to the JSONL file.
     /// Returns true if the write succeeded, false if JSONL is broken (data loss).
     fn write_utterance(&mut self, text: &str, duration_secs: f64) -> bool {
-        if text.trim().is_empty() {
+        let Some(text) = normalize_live_transcript_text(text) else {
             return true; // not a failure, just nothing to write
-        }
+        };
         if self.jsonl_failed {
             return false; // already broken
         }
@@ -231,7 +281,7 @@ impl LiveTranscriptWriter {
             ts: Local::now(),
             offset_ms: offset.as_millis() as u64,
             duration_ms: (duration_secs * 1000.0) as u64,
-            text: text.trim().to_string(),
+            text,
             speaker: None,
         };
 
@@ -284,6 +334,65 @@ impl LiveTranscriptWriter {
         let duration = self.start_time.elapsed().as_secs_f64();
         (self.line_count, duration, self.jsonl_path)
     }
+}
+
+fn normalize_live_transcript_text(text: &str) -> Option<String> {
+    let normalized_lines: Vec<String> = text
+        .lines()
+        .filter_map(|line| {
+            let body = live_text_part(line).trim();
+            if body.is_empty() {
+                None
+            } else {
+                Some(format!("[0:00] {}", body))
+            }
+        })
+        .collect();
+
+    if normalized_lines.is_empty() {
+        return None;
+    }
+
+    let normalized_lines = strip_foreign_script(normalized_lines);
+    let normalized_lines = collapse_noise_markers(normalized_lines);
+    let normalized_lines: Vec<String> = normalized_lines
+        .into_iter()
+        .filter_map(|line| {
+            let body = live_text_part(&line).trim();
+            if body.is_empty() || is_live_noise_marker(body) {
+                None
+            } else {
+                Some(body.to_string())
+            }
+        })
+        .collect();
+
+    if normalized_lines.is_empty() {
+        None
+    } else {
+        Some(normalized_lines.join(" "))
+    }
+}
+
+fn live_text_part(line: &str) -> &str {
+    line.find("] ")
+        .map(|index| &line[index + 2..])
+        .unwrap_or(line)
+}
+
+fn is_live_noise_marker(text: &str) -> bool {
+    let trimmed = text.trim().strip_suffix('.').unwrap_or(text.trim());
+    if !(trimmed.starts_with('[') && trimmed.ends_with(']')) {
+        return false;
+    }
+
+    let inner = &trimmed[1..trimmed.len() - 1];
+    if inner.chars().all(|ch| ch.is_ascii_digit() || ch == ':') {
+        return false;
+    }
+
+    let word_count = inner.split_whitespace().count();
+    (1..=4).contains(&word_count) && inner.len() <= 40
 }
 
 /// Run the live transcript session. Blocks until stop_flag is set.
@@ -527,6 +636,260 @@ pub fn run(
 // loop that standalone live mode uses. The sidecar does NOT write
 // its own WAV (the recording WAV is the canonical audio).
 
+#[cfg(feature = "whisper")]
+const SIDECAR_VAD_CHUNK_MS: u64 = 100;
+#[cfg(feature = "whisper")]
+const SIDECAR_VAD_THRESHOLD: f32 = 0.2;
+#[cfg(feature = "whisper")]
+const SIDECAR_VAD_MIN_SPEECH_MS: i32 = 150;
+#[cfg(feature = "whisper")]
+const SIDECAR_VAD_MIN_SILENCE_MS: i32 = 500;
+#[cfg(feature = "whisper")]
+const SIDECAR_VAD_SPEECH_PAD_MS: i32 = 80;
+#[cfg(feature = "whisper")]
+const SIDECAR_VAD_IDLE_BUFFER_MS: usize = 3000;
+#[cfg(feature = "whisper")]
+const SIDECAR_VAD_ACTIVE_BUFFER_MS: usize = 8000;
+
+#[cfg(feature = "whisper")]
+#[derive(Debug, Default, Clone, Copy)]
+struct SidecarGatingStats {
+    samples_fed: usize,
+    samples_gated: usize,
+    speaking_windows: usize,
+    silence_windows: usize,
+}
+
+#[cfg(feature = "whisper")]
+impl SidecarGatingStats {
+    fn observe(&mut self, samples_len: usize, speaking: bool) {
+        self.samples_fed += samples_len;
+        if speaking {
+            self.speaking_windows += 1;
+        } else {
+            self.samples_gated += samples_len;
+            self.silence_windows += 1;
+        }
+    }
+}
+
+#[cfg(feature = "whisper")]
+enum RecordingSidecarVadBackend {
+    Silero(SileroSidecarVad),
+    Energy(Vad),
+}
+
+#[cfg(feature = "whisper")]
+struct RecordingSidecarVad {
+    backend: RecordingSidecarVadBackend,
+}
+
+#[cfg(feature = "whisper")]
+impl RecordingSidecarVad {
+    fn new(config: &Config) -> Self {
+        if let Some(vad_path) = crate::transcribe::resolve_vad_model_path(config) {
+            match SileroSidecarVad::new(&vad_path) {
+                Ok(vad) => {
+                    tracing::info!(
+                        vad_model = %vad_path.display(),
+                        "recording sidecar using Silero VAD"
+                    );
+                    return Self {
+                        backend: RecordingSidecarVadBackend::Silero(vad),
+                    };
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        vad_model = %vad_path.display(),
+                        error = %e,
+                        "failed to initialize Silero VAD for recording sidecar — falling back to energy VAD"
+                    );
+                }
+            }
+        } else {
+            tracing::warn!(
+                "Silero VAD model unavailable for recording sidecar — falling back to energy VAD"
+            );
+        }
+
+        Self {
+            backend: RecordingSidecarVadBackend::Energy(Vad::new()),
+        }
+    }
+
+    fn mode_name(&self) -> &'static str {
+        match &self.backend {
+            RecordingSidecarVadBackend::Silero(_) => "silero",
+            RecordingSidecarVadBackend::Energy(_) => "energy",
+        }
+    }
+
+    fn process(&mut self, samples: &[f32], rms: f32) -> VadResult {
+        loop {
+            match &mut self.backend {
+                RecordingSidecarVadBackend::Silero(vad) => match vad.process(samples, rms) {
+                    Ok(result) => return result,
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "Silero VAD failed during recording sidecar run — falling back to energy VAD"
+                        );
+                        self.backend = RecordingSidecarVadBackend::Energy(Vad::new());
+                    }
+                },
+                RecordingSidecarVadBackend::Energy(vad) => return vad.process(rms),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "whisper")]
+struct SileroSidecarVad {
+    ctx: whisper_rs::WhisperVadContext,
+    params: whisper_rs::WhisperVadParams,
+    buffer: Vec<f32>,
+    idle_buffer_samples: usize,
+    active_buffer_samples: usize,
+    min_silence_ms: u64,
+    chunk_ms: u64,
+    silence_ms: u64,
+}
+
+#[cfg(feature = "whisper")]
+impl SileroSidecarVad {
+    fn new(vad_path: &Path) -> Result<Self, whisper_rs::WhisperError> {
+        let vad_path = vad_path
+            .to_str()
+            .ok_or(whisper_rs::WhisperError::NullPointer)?;
+
+        let mut ctx_params = whisper_rs::WhisperVadContextParams::default();
+        ctx_params.set_n_threads(
+            std::thread::available_parallelism()
+                .map(|count| count.get() as i32)
+                .unwrap_or(4)
+                .min(4),
+        );
+
+        let mut params = whisper_rs::WhisperVadParams::default();
+        params.set_threshold(SIDECAR_VAD_THRESHOLD);
+        params.set_min_speech_duration(SIDECAR_VAD_MIN_SPEECH_MS);
+        params.set_min_silence_duration(SIDECAR_VAD_MIN_SILENCE_MS);
+        params.set_speech_pad(SIDECAR_VAD_SPEECH_PAD_MS);
+
+        let ctx = whisper_rs::WhisperVadContext::new(vad_path, ctx_params)?;
+
+        Ok(Self {
+            ctx,
+            params,
+            buffer: Vec::with_capacity(16000 * 3),
+            idle_buffer_samples: 16 * SIDECAR_VAD_IDLE_BUFFER_MS,
+            active_buffer_samples: 16 * SIDECAR_VAD_ACTIVE_BUFFER_MS,
+            min_silence_ms: SIDECAR_VAD_MIN_SILENCE_MS as u64,
+            chunk_ms: SIDECAR_VAD_CHUNK_MS,
+            silence_ms: 0,
+        })
+    }
+
+    fn process(
+        &mut self,
+        samples: &[f32],
+        rms: f32,
+    ) -> Result<VadResult, whisper_rs::WhisperError> {
+        self.buffer.extend_from_slice(samples);
+
+        let segments = self.ctx.segments_from_samples(self.params, &self.buffer)?;
+        let buffer_ms = samples_to_ms(self.buffer.len());
+        let last_segment_end_ms = if segments.num_segments() > 0 {
+            segments
+                .get_segment(segments.num_segments() - 1)
+                .map(|segment| (segment.end * 10.0).round().max(0.0) as u64)
+        } else {
+            None
+        };
+
+        let speaking = last_segment_end_ms
+            .map(|end_ms| buffer_ms.saturating_sub(end_ms) < self.min_silence_ms)
+            .unwrap_or(false);
+
+        self.silence_ms = if speaking {
+            0
+        } else if let Some(end_ms) = last_segment_end_ms {
+            buffer_ms.saturating_sub(end_ms)
+        } else {
+            self.silence_ms.saturating_add(self.chunk_ms)
+        };
+
+        let max_len = if speaking || last_segment_end_ms.is_some() {
+            self.active_buffer_samples
+        } else {
+            self.idle_buffer_samples
+        };
+        trim_front(&mut self.buffer, max_len);
+
+        Ok(VadResult {
+            speaking,
+            silence_ms: self.silence_ms,
+            energy: rms,
+            noise_floor: 0.0,
+        })
+    }
+}
+
+#[cfg(feature = "whisper")]
+fn samples_to_ms(samples: usize) -> u64 {
+    ((samples as u64) * 1000) / 16000
+}
+
+#[cfg(feature = "whisper")]
+fn trim_front(buffer: &mut Vec<f32>, max_len: usize) {
+    if buffer.len() > max_len {
+        let drop = buffer.len() - max_len;
+        buffer.drain(0..drop);
+    }
+}
+
+#[cfg(all(feature = "whisper", feature = "parakeet"))]
+fn transcribe_with_whisper_for_live_sidecar(
+    samples: &[f32],
+    whisper_ctx: &whisper_rs::WhisperContext,
+    language: Option<String>,
+) -> Option<(String, f64)> {
+    if samples.is_empty() {
+        return None;
+    }
+
+    let mut streaming = StreamingWhisper::new(language);
+    for chunk in samples.chunks(1600) {
+        let _ = streaming.feed(chunk, whisper_ctx);
+    }
+    streaming
+        .finalize(whisper_ctx)
+        .map(|result| (result.text, result.duration_secs))
+}
+
+#[cfg(feature = "parakeet")]
+fn transcribe_with_parakeet_for_live_sidecar(
+    samples: &[f32],
+    config: &Config,
+) -> Result<Option<(String, f64)>, MinutesError> {
+    if samples.is_empty() {
+        return Ok(None);
+    }
+
+    let tmp_wav = tempfile::Builder::new()
+        .prefix("minutes-live-sidecar-utterance-")
+        .suffix(".wav")
+        .tempfile()
+        .map_err(TranscribeError::Io)?;
+    crate::transcribe::write_wav_16k_mono(tmp_wav.path(), samples)?;
+
+    match crate::transcribe::transcribe(tmp_wav.path(), config) {
+        Ok(result) => Ok(Some((result.text, samples.len() as f64 / 16000.0))),
+        Err(TranscribeError::EmptyAudio) | Err(TranscribeError::EmptyTranscript(_)) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Run a live transcript sidecar that consumes audio samples from a channel.
 /// Blocks until the channel disconnects (recording stopped) or stop_flag is set.
 /// Loads its own whisper model (tiny/base) for real-time streaming.
@@ -601,12 +964,24 @@ fn run_sidecar_inner_mpsc(
     let mut writer = LiveTranscriptWriter::new(&sidecar_config)?;
     writer.mark_healthy();
 
-    let mut vad = Vad::new();
+    let mut vad = RecordingSidecarVad::new(config);
     let mut streaming = StreamingWhisper::new(config.transcription.language.clone());
+    #[cfg(feature = "parakeet")]
+    let mut parakeet_utterance_samples: Vec<f32> = Vec::new();
+    #[cfg(feature = "parakeet")]
+    let mut parakeet_live_enabled =
+        recording_sidecar_supports_parakeet(&config.transcription.engine);
+    #[cfg(not(feature = "parakeet"))]
+    let parakeet_live_enabled = false;
     let mut was_speaking = false;
     let mut utterance_samples: usize = 0;
+    let mut gating_stats = SidecarGatingStats::default();
     let max_utterance_secs = config.live_transcript.max_utterance_secs.max(5);
     let max_utterance_samples = (max_utterance_secs as usize).saturating_mul(16000);
+
+    if config.transcription.engine.eq_ignore_ascii_case("parakeet") && !parakeet_live_enabled {
+        emit_recording_sidecar_engine_scope_warning(&config.transcription.engine);
+    }
 
     tracing::info!("live sidecar started (recording mode)");
 
@@ -614,7 +989,35 @@ fn run_sidecar_inner_mpsc(
         writer.maybe_write_heartbeat();
         if stop_flag.load(Ordering::Relaxed) {
             if utterance_samples > 0 {
-                if let Some(sr) = streaming.finalize(&whisper_ctx) {
+                if parakeet_live_enabled {
+                    #[cfg(feature = "parakeet")]
+                    {
+                        match transcribe_with_parakeet_for_live_sidecar(
+                            &parakeet_utterance_samples,
+                            config,
+                        ) {
+                            Ok(Some((text, duration_secs))) => {
+                                writer.write_utterance(&text, duration_secs);
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                tracing::warn!(
+                                    error = %error,
+                                    "live recording-sidecar parakeet path failed at shutdown — falling back to whisper"
+                                );
+                                if let Some((text, duration_secs)) =
+                                    transcribe_with_whisper_for_live_sidecar(
+                                        &parakeet_utterance_samples,
+                                        &whisper_ctx,
+                                        config.transcription.language.clone(),
+                                    )
+                                {
+                                    writer.write_utterance(&text, duration_secs);
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(sr) = streaming.finalize(&whisper_ctx) {
                     writer.write_utterance(&sr.text, sr.duration_secs);
                 }
             }
@@ -626,7 +1029,35 @@ fn run_sidecar_inner_mpsc(
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 if utterance_samples > 0 {
-                    if let Some(sr) = streaming.finalize(&whisper_ctx) {
+                    if parakeet_live_enabled {
+                        #[cfg(feature = "parakeet")]
+                        {
+                            match transcribe_with_parakeet_for_live_sidecar(
+                                &parakeet_utterance_samples,
+                                config,
+                            ) {
+                                Ok(Some((text, duration_secs))) => {
+                                    writer.write_utterance(&text, duration_secs);
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    tracing::warn!(
+                                        error = %error,
+                                        "live recording-sidecar parakeet path failed during channel disconnect — falling back to whisper"
+                                    );
+                                    if let Some((text, duration_secs)) =
+                                        transcribe_with_whisper_for_live_sidecar(
+                                            &parakeet_utterance_samples,
+                                            &whisper_ctx,
+                                            config.transcription.language.clone(),
+                                        )
+                                    {
+                                        writer.write_utterance(&text, duration_secs);
+                                    }
+                                }
+                            }
+                        }
+                    } else if let Some(sr) = streaming.finalize(&whisper_ctx) {
                         writer.write_utterance(&sr.text, sr.duration_secs);
                     }
                 }
@@ -641,19 +1072,56 @@ fn run_sidecar_inner_mpsc(
             (sum_sq / samples.len() as f32).sqrt()
         };
 
-        let vad_result = vad.process(rms);
+        let vad_result = vad.process(&samples, rms);
+        gating_stats.observe(samples.len(), vad_result.speaking);
 
         if vad_result.speaking {
             was_speaking = true;
             utterance_samples += samples.len();
 
-            if let Some(_sr) = streaming.feed(&samples, &whisper_ctx) {
+            if parakeet_live_enabled {
+                #[cfg(feature = "parakeet")]
+                {
+                    parakeet_utterance_samples.extend_from_slice(&samples);
+                }
+            } else if let Some(_sr) = streaming.feed(&samples, &whisper_ctx) {
                 // Partial result — could emit event in future
             }
 
             if utterance_samples >= max_utterance_samples {
                 tracing::info!("sidecar: max utterance duration, force-finalizing");
-                if let Some(sr) = streaming.finalize(&whisper_ctx) {
+                if parakeet_live_enabled {
+                    #[cfg(feature = "parakeet")]
+                    {
+                        match transcribe_with_parakeet_for_live_sidecar(
+                            &parakeet_utterance_samples,
+                            config,
+                        ) {
+                            Ok(Some((text, duration_secs))) => {
+                                writer.write_utterance(&text, duration_secs);
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                tracing::warn!(
+                                    error = %error,
+                                    "live recording-sidecar parakeet path failed — switching this session to whisper"
+                                );
+                                parakeet_live_enabled = false;
+                                emit_recording_sidecar_engine_scope_warning("parakeet");
+                                if let Some((text, duration_secs)) =
+                                    transcribe_with_whisper_for_live_sidecar(
+                                        &parakeet_utterance_samples,
+                                        &whisper_ctx,
+                                        config.transcription.language.clone(),
+                                    )
+                                {
+                                    writer.write_utterance(&text, duration_secs);
+                                }
+                            }
+                        }
+                        parakeet_utterance_samples.clear();
+                    }
+                } else if let Some(sr) = streaming.finalize(&whisper_ctx) {
                     writer.write_utterance(&sr.text, sr.duration_secs);
                 }
                 streaming.reset();
@@ -661,7 +1129,38 @@ fn run_sidecar_inner_mpsc(
                 was_speaking = false;
             }
         } else if was_speaking && utterance_samples > 0 {
-            if let Some(sr) = streaming.finalize(&whisper_ctx) {
+            if parakeet_live_enabled {
+                #[cfg(feature = "parakeet")]
+                {
+                    match transcribe_with_parakeet_for_live_sidecar(
+                        &parakeet_utterance_samples,
+                        config,
+                    ) {
+                        Ok(Some((text, duration_secs))) => {
+                            writer.write_utterance(&text, duration_secs);
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %error,
+                                "live recording-sidecar parakeet path failed — switching this session to whisper"
+                            );
+                            parakeet_live_enabled = false;
+                            emit_recording_sidecar_engine_scope_warning("parakeet");
+                            if let Some((text, duration_secs)) =
+                                transcribe_with_whisper_for_live_sidecar(
+                                    &parakeet_utterance_samples,
+                                    &whisper_ctx,
+                                    config.transcription.language.clone(),
+                                )
+                            {
+                                writer.write_utterance(&text, duration_secs);
+                            }
+                        }
+                    }
+                    parakeet_utterance_samples.clear();
+                }
+            } else if let Some(sr) = streaming.finalize(&whisper_ctx) {
                 writer.write_utterance(&sr.text, sr.duration_secs);
             }
             streaming.reset();
@@ -673,6 +1172,14 @@ fn run_sidecar_inner_mpsc(
     let (lines, duration, _path) = writer.finalize();
     // Clean up status file so session_status() doesn't report stale data
     clear_status_file();
+    tracing::info!(
+        vad_mode = vad.mode_name(),
+        samples_fed = gating_stats.samples_fed,
+        samples_gated = gating_stats.samples_gated,
+        speaking_windows = gating_stats.speaking_windows,
+        silence_windows = gating_stats.silence_windows,
+        "live sidecar gating summary"
+    );
     tracing::info!(
         lines = lines,
         duration_secs = format!("{:.1}", duration),
@@ -954,6 +1461,9 @@ pub fn clear_status_file() {
 
 #[cfg(test)]
 mod tests {
+    use super::recording_sidecar_engine_scope_warning;
+    #[cfg(not(feature = "parakeet"))]
+    use super::PARAKEET_RECORDING_LIVE_SCOPE_WARNING;
     use super::*;
     use chrono::Duration as ChronoDuration;
     use std::io::Write;
@@ -1045,6 +1555,141 @@ mod tests {
         assert!(line.text.trim().is_empty());
     }
 
+    #[cfg(feature = "whisper")]
+    fn read_wav_samples(path: &Path) -> Vec<f32> {
+        let mut reader = hound::WavReader::open(path).unwrap();
+        let spec = reader.spec();
+        let raw: Vec<f32> = reader
+            .samples::<i16>()
+            .map(|sample| sample.unwrap() as f32 / i16::MAX as f32)
+            .collect();
+
+        let mono = if spec.channels == 1 {
+            raw
+        } else {
+            raw.chunks(spec.channels as usize)
+                .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
+                .collect()
+        };
+
+        if spec.sample_rate == 16000 {
+            mono
+        } else {
+            crate::transcribe::resample(&mono, spec.sample_rate, 16000)
+        }
+    }
+
+    #[cfg(feature = "whisper")]
+    fn write_wav_samples(path: &Path, samples: &[f32]) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for sample in samples {
+            let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+            writer.write_sample(pcm).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+
+    #[cfg(feature = "whisper")]
+    fn pad_with_silence_to_db_rms(samples: &[f32], target_db: f32) -> Vec<f32> {
+        let target_rms = 10f32.powf(target_db / 20.0);
+        let speech_energy = samples.iter().map(|sample| sample * sample).sum::<f32>();
+        let target_total_samples = (speech_energy / target_rms.powi(2))
+            .ceil()
+            .max(samples.len() as f32) as usize;
+        let silence_needed = target_total_samples.saturating_sub(samples.len());
+        let lead_silence = silence_needed / 2;
+        let tail_silence = silence_needed - lead_silence;
+
+        let mut padded = Vec::with_capacity(target_total_samples);
+        padded.extend(std::iter::repeat(0.0).take(lead_silence));
+        padded.extend_from_slice(samples);
+        padded.extend(std::iter::repeat(0.0).take(tail_silence));
+        padded
+    }
+
+    #[cfg(feature = "whisper")]
+    fn rms_db(samples: &[f32]) -> f32 {
+        let rms = (samples.iter().map(|sample| sample * sample).sum::<f32>()
+            / samples.len() as f32)
+            .sqrt()
+            .max(1e-6);
+        20.0 * rms.log10()
+    }
+
+    #[cfg(feature = "whisper")]
+    fn count_detected_utterances<T>(
+        detector: &mut T,
+        samples: &[f32],
+        mut process: impl FnMut(&mut T, &[f32], f32) -> VadResult,
+    ) -> usize {
+        let mut utterances = 0usize;
+        let mut was_speaking = false;
+
+        for chunk in samples.chunks(1600) {
+            let rms = if chunk.is_empty() {
+                0.0
+            } else {
+                let sum_sq: f32 = chunk.iter().map(|sample| sample * sample).sum();
+                (sum_sq / chunk.len() as f32).sqrt()
+            };
+            let vad_result = process(detector, chunk, rms);
+
+            if vad_result.speaking {
+                was_speaking = true;
+            } else if was_speaking {
+                utterances += 1;
+                was_speaking = false;
+            }
+        }
+
+        if was_speaking {
+            utterances += 1;
+        }
+
+        utterances
+    }
+
+    #[cfg(feature = "whisper")]
+    #[test]
+    fn silero_sidecar_vad_recovers_quiet_minus_40_db_wav() {
+        let config = Config::default();
+        let Some(vad_path) = crate::transcribe::resolve_vad_model_path(&config) else {
+            eprintln!("skipping quiet-audio Silero VAD test — model not installed");
+            return;
+        };
+
+        let demo_wav =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tauri/src/audio/cue-start.wav");
+        let original = read_wav_samples(&demo_wav);
+        let quiet = pad_with_silence_to_db_rms(&original, -40.0);
+        let quiet_db = rms_db(&quiet);
+        assert!(
+            (-40.5..=-39.5).contains(&quiet_db),
+            "expected fixture RMS near -40 dB, got {quiet_db:.2} dB"
+        );
+        let dir = tempdir().unwrap();
+        let quiet_wav = dir.path().join("demo-minus-40db.wav");
+        write_wav_samples(&quiet_wav, &quiet);
+        let quiet_samples = read_wav_samples(&quiet_wav);
+
+        let mut silero = SileroSidecarVad::new(&vad_path).unwrap();
+        let utterances =
+            count_detected_utterances(&mut silero, &quiet_samples, |detector, chunk, rms| {
+                detector.process(chunk, rms).unwrap()
+            });
+
+        assert!(
+            utterances >= 1,
+            "expected at least one utterance from -40 dB WAV after Silero VAD"
+        );
+    }
+
     #[cfg(all(feature = "whisper", feature = "streaming"))]
     #[test]
     fn sidecar_missing_status_is_inactive_with_diagnostic() {
@@ -1106,6 +1751,40 @@ mod tests {
         assert!(!status.active);
         assert_eq!(status.source, None);
         assert_eq!(status.diagnostic.as_deref(), Some("sidecar failed"));
+    }
+
+    #[test]
+    fn recording_sidecar_scope_warning_only_applies_to_parakeet() {
+        #[cfg(feature = "parakeet")]
+        {
+            assert_eq!(recording_sidecar_engine_scope_warning("parakeet"), None);
+            assert_eq!(recording_sidecar_engine_scope_warning("PaRaKeEt"), None);
+        }
+        #[cfg(not(feature = "parakeet"))]
+        {
+            assert_eq!(
+                recording_sidecar_engine_scope_warning("parakeet"),
+                Some(PARAKEET_RECORDING_LIVE_SCOPE_WARNING)
+            );
+            assert_eq!(
+                recording_sidecar_engine_scope_warning("PaRaKeEt"),
+                Some(PARAKEET_RECORDING_LIVE_SCOPE_WARNING)
+            );
+        }
+        assert_eq!(recording_sidecar_engine_scope_warning("whisper"), None);
+    }
+
+    #[test]
+    fn normalize_live_transcript_text_filters_noise_placeholders() {
+        assert_eq!(normalize_live_transcript_text("[typing]"), None);
+        assert_eq!(normalize_live_transcript_text("[BLANK_AUDIO]"), None);
+        assert_eq!(normalize_live_transcript_text("[Musik]"), None);
+    }
+
+    #[test]
+    fn normalize_live_transcript_text_flattens_timestamped_lines() {
+        let cleaned = normalize_live_transcript_text("[0:00] hello\n[0:01] world").unwrap();
+        assert_eq!(cleaned, "hello world");
     }
 
     #[cfg(all(feature = "whisper", feature = "streaming"))]

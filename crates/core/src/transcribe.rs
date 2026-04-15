@@ -1306,7 +1306,7 @@ fn resolve_model_path(config: &Config) -> Result<PathBuf, TranscribeError> {
 
 /// Resolve the Silero VAD model path. Returns None if VAD is disabled or model not found.
 #[cfg(feature = "whisper")]
-fn resolve_vad_model_path(config: &Config) -> Option<PathBuf> {
+pub(crate) fn resolve_vad_model_path(config: &Config) -> Option<PathBuf> {
     let vad_model = &config.transcription.vad_model;
     if vad_model.is_empty() {
         return None;

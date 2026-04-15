@@ -18,6 +18,26 @@ on Apple Silicon via Metal GPU acceleration.
 Parakeet's 110M model matches Whisper large-v3 accuracy at 14x fewer parameters.
 The 600M model beats everything in its class.
 
+## Scope
+
+Today, `engine = "parakeet"` is wired for these paths:
+
+- post-recording batch transcription (`minutes process`, desktop processing, and the shared cleanup pipeline)
+- folder watcher memo processing after a file lands on disk
+- recording-sidecar live transcription during `minutes record`
+
+The recording sidecar routes each finalized utterance through the Parakeet path. If
+`parakeet_sidecar_enabled = true`, it reuses the warm `example-server` socket; otherwise
+it falls back to the Parakeet subprocess path for each utterance.
+
+These paths still use Whisper today, even if the global transcription engine is set to `parakeet`:
+
+- standalone live transcription (`minutes live` and desktop Live Mode)
+- dictation
+
+If Parakeet support is not compiled into the current build, Minutes logs a warning and
+falls back to Whisper for `minutes record` live transcription.
+
 ## Fastest Path on Apple Silicon
 
 If you want the shortest path from "I have a Mac" to "Minutes is using
@@ -213,7 +233,9 @@ cargo build --release -p minutes-cli --features parakeet
 
 Note: The `parakeet` feature is opt-in and not included in the default build.
 Whisper is always compiled in (it's the default feature). Both engines can coexist
-in the same binary — the config file controls which one is used at runtime.
+in the same binary — today the config file selects the offline/batch path plus
+recording-sidecar live transcription during `minutes record`, while standalone
+live transcription and dictation still use Whisper. See [Scope](#scope).
 
 ## Switching Back to Whisper
 

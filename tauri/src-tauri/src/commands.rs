@@ -5732,6 +5732,7 @@ pub fn cmd_get_settings() -> serde_json::Value {
             "cooldown_minutes": config.call_detection.cooldown_minutes,
             "apps": config.call_detection.apps,
             "google_meet_enabled": call_detection_has_sentinel(&config, "google-meet"),
+            "teams_web_enabled": call_detection_has_sentinel(&config, "teams-web"),
             "stop_when_call_ends": config.call_detection.stop_when_call_ends,
             "call_end_stop_countdown_secs": config.call_detection.call_end_stop_countdown_secs,
         },
@@ -5748,6 +5749,10 @@ pub fn cmd_get_settings() -> serde_json::Value {
             "shortcut": config.dictation.shortcut,
             "hotkey_enabled": config.dictation.hotkey_enabled,
             "hotkey_keycode": config.dictation.hotkey_keycode,
+        },
+        "palette": {
+            "shortcut_enabled": config.palette.shortcut_enabled,
+            "shortcut": config.palette.shortcut,
         },
     })
 }
@@ -5875,6 +5880,9 @@ pub fn cmd_set_setting(section: String, key: String, value: String) -> Result<St
         ("call_detection", "google_meet_enabled") => {
             set_call_detection_sentinel(&mut config, "google-meet", value == "true");
         }
+        ("call_detection", "teams_web_enabled") => {
+            set_call_detection_sentinel(&mut config, "teams-web", value == "true");
+        }
         ("call_detection", "stop_when_call_ends") => {
             config.call_detection.stop_when_call_ends = value == "true";
         }
@@ -5943,6 +5951,16 @@ pub fn cmd_set_setting(section: String, key: String, value: String) -> Result<St
         ("hooks", "post_record") => {
             config.hooks.post_record = parse_optional_string_setting(&value);
         }
+
+        // Palette — persistence arms for the in-memory AppState writes
+        // performed by `cmd_set_palette_shortcut`. Without these the
+        // `.ok()`-wrapped `cmd_set_setting` calls at the bottom of that
+        // handler silently swallow an "Unknown setting" error and the
+        // user's rebind never lands on disk.
+        ("palette", "shortcut_enabled") => {
+            config.palette.shortcut_enabled = value == "true";
+        }
+        ("palette", "shortcut") => config.palette.shortcut = value.clone(),
 
         _ => return Err(format!("Unknown setting: {}.{}", section, key)),
     }
@@ -6133,6 +6151,22 @@ mod tests {
 
         set_call_detection_sentinel(&mut config, "google-meet", false);
         assert!(!call_detection_has_sentinel(&config, "google-meet"));
+    }
+
+    #[test]
+    fn call_detection_teams_web_sentinel_toggle_is_independent() {
+        let mut config = Config::default();
+        assert!(!call_detection_has_sentinel(&config, "teams-web"));
+        assert!(!call_detection_has_sentinel(&config, "google-meet"));
+
+        set_call_detection_sentinel(&mut config, "teams-web", true);
+        set_call_detection_sentinel(&mut config, "google-meet", true);
+        assert!(call_detection_has_sentinel(&config, "teams-web"));
+        assert!(call_detection_has_sentinel(&config, "google-meet"));
+
+        set_call_detection_sentinel(&mut config, "teams-web", false);
+        assert!(!call_detection_has_sentinel(&config, "teams-web"));
+        assert!(call_detection_has_sentinel(&config, "google-meet"));
     }
 
     #[test]
@@ -7520,11 +7554,11 @@ pub fn maybe_show_palette_first_run_notice(app: &tauri::AppHandle) {
         Err(e) => {
             // Don't write the marker. The fallback consent surface is
             // the visible "Minutes Palette" branding inside the
-            // overlay itself plus the dedicated Settings UI row that
-            // landed in this same slice. A user who hits ⌘⇧K
+            // overlay itself plus the dedicated Settings row under
+            // Shortcuts → Command palette. A user who hits ⌘⇧K
             // expecting VS Code's Delete Line will at least see
             // "Minutes Palette" in the overlay header and can find
-            // the toggle in Settings → Command Palette.
+            // the toggle in Settings → Shortcuts → Command palette.
             eprintln!(
                 "[palette] first-run notification failed: {} (will retry on next launch)",
                 e

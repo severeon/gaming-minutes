@@ -32,7 +32,7 @@ export CXXFLAGS="-I$(xcrun --show-sdk-path)/usr/include/c++/v1"  # macOS only
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p minutes-core --lib
-cargo test -p minutes-cli --lib
+cargo test -p minutes-cli
 cargo check -p minutes-app
 ```
 
@@ -43,8 +43,8 @@ If any of these fail, stop. Fix the underlying issue before bumping versions.
 The MCP server and SDK are real npm packages. They have their own build steps and their own dependency resolution. The Rust workspace tooling does not catch problems in either.
 
 ```bash
-(cd crates/sdk && npm run build)
-(cd crates/mcp && npm run build)
+(cd crates/sdk && npm install && npm run build)
+(cd crates/mcp && npm install && npm run build)
 (cd crates/mcp && npm install --dry-run)   # surfaces unresolved versions early
 ```
 

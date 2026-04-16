@@ -6086,6 +6086,272 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Arms that have no current caller but are deliberately kept pending a
+    /// UI surface. Each entry is a documented audit finding (see the
+    /// 2026-04-16 settings audit Table 1 — "fields with setter but no UI
+    /// input"). Trim this list as UI is added; the guard will start
+    /// catching *new* regressions as soon as any entry drops off.
+    ///
+    /// The alternative (removing the arm entirely) is fine when there's no
+    /// concrete plan to expose the setting — users can still edit the
+    /// config.toml field directly. Re-add the arm when the UI lands.
+    const INTENTIONAL_ORPHANS: &[(&str, &str)] = &[
+        // User-facing but no UI planned this sprint. Users on config.toml
+        // can still toggle these; the cmd_set_setting arm is ready for a
+        // future UI row.
+        ("dictation", "accumulate"),
+        ("dictation", "auto_paste"),
+        ("dictation", "cleanup_engine"),
+        ("dictation", "destination"),
+        // dictation.shortcut_enabled is written directly by cmd_set_shortcut
+        // via `config.dictation.shortcut_enabled = ...` — the cmd_set_setting
+        // arm is vestigial. Keep for symmetry with other shortcut slots.
+        ("dictation", "shortcut_enabled"),
+        // screen_context.keep_after_summary controls post-summary screenshot
+        // retention. Low-traffic; TOML-only is fine.
+        ("screen_context", "keep_after_summary"),
+        // Parakeet sidecar is beta / opt-in. No UI until the sidecar path is
+        // out of beta.
+        ("transcription", "parakeet_sidecar_enabled"),
+    ];
+
+    /// CI guard — every `("section", "key")` arm in `cmd_set_setting` must be
+    /// reachable from at least one call site (HTML invoke OR Rust internal
+    /// call), OR listed in `INTENTIONAL_ORPHANS` above. This prevents a
+    /// future repeat of the palette regression where arms existed in Rust
+    /// but no frontend ever called them.
+    ///
+    /// If this test fails:
+    ///   - Add the missing UI input (or Rust caller), OR
+    ///   - Remove the orphaned arm AND its config field from config.rs, OR
+    ///   - If it's a deliberate setter-without-UI from the audit, add it to
+    ///     INTENTIONAL_ORPHANS with a comment explaining why.
+    #[test]
+    fn every_cmd_set_setting_arm_has_a_caller() {
+        let manifest = env!("CARGO_MANIFEST_DIR"); // .../tauri/src-tauri
+        let commands_path = format!("{}/src/commands.rs", manifest);
+        let commands = std::fs::read_to_string(&commands_path).expect("failed to read commands.rs");
+
+        let arms = extract_set_setting_arms(&commands);
+        assert!(
+            !arms.is_empty(),
+            "found no cmd_set_setting arms — parser broken?"
+        );
+
+        // Aggregate all frontend + Rust source so an arm called from either
+        // surface counts as reachable. Rust-internal call sites (e.g.
+        // cmd_set_palette_shortcut → cmd_set_setting("palette", ...)) are
+        // legitimate and shouldn't be flagged as dead.
+        let mut haystack = String::new();
+        let rust_root = format!("{}/src", manifest);
+        for path in walk_with_extensions(&rust_root, &["rs"]) {
+            let Ok(contents) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            // commands.rs contains the match block that *defines* the arms —
+            // if we included it verbatim, every arm would trivially satisfy
+            // the proximity check. But commands.rs also contains legitimate
+            // internal callers like cmd_set_palette_shortcut → cmd_set_setting.
+            // Strip the match-block body only; keep the rest of the file.
+            let filtered = if path.file_name().and_then(|n| n.to_str()) == Some("commands.rs") {
+                strip_set_setting_match_block(&contents)
+            } else {
+                contents
+            };
+            haystack.push_str(&filtered);
+            haystack.push('\n');
+        }
+        let html_root = format!("{}/../src", manifest);
+        for path in walk_with_extensions(&html_root, &["html", "js"]) {
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                haystack.push_str(&contents);
+                haystack.push('\n');
+            }
+        }
+
+        let mut orphans: Vec<String> = arms
+            .iter()
+            .filter(|(s, k)| !arm_has_caller(&haystack, s, k))
+            .filter(|(s, k)| {
+                !INTENTIONAL_ORPHANS
+                    .iter()
+                    .any(|(ds, dk)| ds == s && dk == k)
+            })
+            .map(|(s, k)| format!("(\"{}\", \"{}\")", s, k))
+            .collect();
+        orphans.sort();
+
+        // Flip side: fail if INTENTIONAL_ORPHANS lists an entry that DOES
+        // have a caller now (stale allowlist). Forces the list to shrink
+        // as UI lands.
+        let mut stale: Vec<String> = INTENTIONAL_ORPHANS
+            .iter()
+            .filter(|(s, k)| arm_has_caller(&haystack, s, k))
+            .filter(|(s, k)| arms.iter().any(|(a_s, a_k)| a_s == s && a_k == k))
+            .map(|(s, k)| format!("(\"{}\", \"{}\")", s, k))
+            .collect();
+        stale.sort();
+
+        assert!(
+            orphans.is_empty(),
+            "cmd_set_setting arms have no caller (dead code):\n  {}\n\n\
+             Every (section, key) arm in commands.rs:cmd_set_setting must be \
+             reachable from at least one HTML `invoke('cmd_set_setting', ...)` \
+             call OR a Rust-internal `cmd_set_setting(...)` call in another \
+             file. Options: add a caller, remove the arm, or document a \
+             deferred intent in INTENTIONAL_ORPHANS above.",
+            orphans.join("\n  ")
+        );
+
+        assert!(
+            stale.is_empty(),
+            "INTENTIONAL_ORPHANS contains arms that now have a caller:\n  {}\n\n\
+             Remove these from the allowlist so the guard catches future \
+             regressions on them.",
+            stale.join("\n  ")
+        );
+    }
+
+    /// Strip the body of the `match (section.as_str(), key.as_str()) { ... }`
+    /// expression from commands.rs, replacing it with a blank region so the
+    /// proximity-based caller check doesn't count the arm *definitions* as
+    /// their own callers. Preserves the rest of the file so internal callers
+    /// in commands.rs (e.g. cmd_set_palette_shortcut) still count.
+    fn strip_set_setting_match_block(src: &str) -> String {
+        // The match arms live inside `fn cmd_set_setting`, whose body
+        // contains the literal function name as a lead-in. Without
+        // stripping, every arm in the match body would appear within the
+        // 260-char window of the `cmd_set_setting` identifier in its own
+        // signature and count as its own caller.
+        //
+        // Stripping the match body is sufficient; INTENTIONAL_ORPHANS in
+        // the tests module contains bare `("X", "Y")` tuples that are NOT
+        // preceded by a `cmd_set_setting` token, so arm_has_caller's
+        // anchored search already ignores them.
+        let mut out = String::with_capacity(src.len());
+        let mut in_match = false;
+        for line in src.lines() {
+            // Sentinel is the *full* match expression as it appears in the
+            // real code: leading 4-space indent + trailing `{`. Tighter than
+            // a substring search so this function's own test-code literals
+            // (e.g. `line.contains("match (section.as_str(), key.as_str())")`
+            // as a string argument) don't accidentally trip the sentinel.
+            if line == "    match (section.as_str(), key.as_str()) {" {
+                in_match = true;
+                out.push('\n');
+                continue;
+            }
+            if in_match && line.trim_start().starts_with("_ => return Err") {
+                in_match = false;
+                out.push('\n');
+                continue;
+            }
+            if in_match {
+                out.push('\n');
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// Parse `(\"section\", \"key\")` tuples from the body of the
+    /// `match (section.as_str(), key.as_str())` expression in cmd_set_setting.
+    fn extract_set_setting_arms(src: &str) -> Vec<(String, String)> {
+        let mut arms = Vec::new();
+        let mut in_block = false;
+        for line in src.lines() {
+            // Match the actual match line exactly — see comment in
+            // strip_set_setting_match_block for why the looser substring
+            // search would self-trigger on this test's own source code.
+            if line == "    match (section.as_str(), key.as_str()) {" {
+                in_block = true;
+                continue;
+            }
+            if in_block && line.trim_start().starts_with("_ => return Err") {
+                break;
+            }
+            if !in_block {
+                continue;
+            }
+            if let Some(arm) = parse_arm_tuple(line) {
+                arms.push(arm);
+            }
+        }
+        arms
+    }
+
+    fn parse_arm_tuple(line: &str) -> Option<(String, String)> {
+        let trimmed = line.trim();
+        let rest = trimmed.strip_prefix('(')?;
+        let (section, rest) = extract_quoted(rest)?;
+        let rest = rest.trim_start().strip_prefix(',')?.trim_start();
+        let (key, rest) = extract_quoted(rest)?;
+        let rest = rest.trim_start();
+        if !rest.starts_with(')') {
+            return None;
+        }
+        Some((section, key))
+    }
+
+    fn extract_quoted(s: &str) -> Option<(String, &str)> {
+        let s = s.trim_start().strip_prefix('"')?;
+        let end = s.find('"')?;
+        Some((s[..end].to_string(), &s[end + 1..]))
+    }
+
+    /// Look for callers of `cmd_set_setting(section, key, ...)` in two
+    /// shapes: the HTML `invoke('cmd_set_setting', { section: 'X', key: 'Y' })`
+    /// pattern and the Rust `cmd_set_setting("X".into(), "Y".into(), ...)`
+    /// pattern. Both anchor on `cmd_set_setting` as a lead-in, which avoids
+    /// false positives from unrelated code that happens to mention the
+    /// section/key literals (e.g. this guard's own INTENTIONAL_ORPHANS const).
+    fn arm_has_caller(haystack: &str, section: &str, key: &str) -> bool {
+        let section_patterns = [format!("\"{}\"", section), format!("'{}'", section)];
+        let key_patterns = [format!("\"{}\"", key), format!("'{}'", key)];
+        // Match two specific call shapes only, not any mention of the
+        // function name. This avoids false positives from doc comments,
+        // error-message strings, and the guard's own prose.
+        //   Rust:  cmd_set_setting(
+        //   HTML:  'cmd_set_setting'
+        let anchors = ["cmd_set_setting(", "'cmd_set_setting'"];
+        for anchor in &anchors {
+            let mut cursor = 0;
+            while let Some(offset) = haystack[cursor..].find(anchor) {
+                let abs = cursor + offset;
+                // 260-char window covers multi-line HTML invokes — the
+                // real call shape spans about 5 lines (invoke + object
+                // opening brace + section + key + value + closing). Avoid
+                // using real section/key names in this comment; they
+                // would self-match via the arm_has_caller scan.
+                let window_end = (abs + 260).min(haystack.len());
+                let window = &haystack[abs..window_end];
+                let has_section = section_patterns.iter().any(|sp| window.contains(sp));
+                let has_key = key_patterns.iter().any(|kp| window.contains(kp));
+                if has_section && has_key {
+                    return true;
+                }
+                cursor = abs + anchor.len();
+            }
+        }
+        false
+    }
+
+    fn walk_with_extensions(root: &str, exts: &[&str]) -> Vec<std::path::PathBuf> {
+        walkdir::WalkDir::new(root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|ext| exts.contains(&ext))
+            })
+            .map(|e| e.path().to_path_buf())
+            .collect()
+    }
+
     #[test]
     fn preserve_failed_capture_moves_audio_into_failed_captures() {
         let dir = TempDir::new().unwrap();

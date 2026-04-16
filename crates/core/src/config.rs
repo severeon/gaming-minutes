@@ -167,7 +167,6 @@ pub struct SummarizationConfig {
     pub ollama_model: String,
     pub mistral_model: String,
     pub language: String,
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

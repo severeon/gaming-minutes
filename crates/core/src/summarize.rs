@@ -253,7 +253,11 @@ pub fn refine_title(
     let prompt_input = build_title_refinement_input(summary_text, summary, entities);
     let model = title_refinement_model(config)
         .ok_or("no configured summarization engine available for title refinement")?;
-    let prompt = format!("{}\n\n{}", build_title_prompt(get_effective_summary_language(config)), prompt_input);
+    let prompt = format!(
+        "{}\n\n{}",
+        build_title_prompt(get_effective_summary_language(config)),
+        prompt_input
+    );
     let response = run_title_refinement_prompt(&prompt, config)?;
 
     Ok(TitleRefinement {
@@ -974,7 +978,8 @@ fn summarize_with_agent_impl(
 
     let prompt = format!(
         "{}\n\nSummarize this transcript:\n\n<transcript>\n{}\n</transcript>",
-        build_system_prompt(get_effective_summary_language(config)), truncated
+        build_system_prompt(get_effective_summary_language(config)),
+        truncated
     );
 
     tracing::info!(agent = %agent_cmd, prompt_len = prompt.len(), "summarizing via agent CLI");

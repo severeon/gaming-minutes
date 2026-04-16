@@ -5749,6 +5749,10 @@ pub fn cmd_get_settings() -> serde_json::Value {
             "hotkey_enabled": config.dictation.hotkey_enabled,
             "hotkey_keycode": config.dictation.hotkey_keycode,
         },
+        "palette": {
+            "shortcut_enabled": config.palette.shortcut_enabled,
+            "shortcut": config.palette.shortcut,
+        },
     })
 }
 
@@ -5943,6 +5947,16 @@ pub fn cmd_set_setting(section: String, key: String, value: String) -> Result<St
         ("hooks", "post_record") => {
             config.hooks.post_record = parse_optional_string_setting(&value);
         }
+
+        // Palette — persistence arms for the in-memory AppState writes
+        // performed by `cmd_set_palette_shortcut`. Without these the
+        // `.ok()`-wrapped `cmd_set_setting` calls at the bottom of that
+        // handler silently swallow an "Unknown setting" error and the
+        // user's rebind never lands on disk.
+        ("palette", "shortcut_enabled") => {
+            config.palette.shortcut_enabled = value == "true";
+        }
+        ("palette", "shortcut") => config.palette.shortcut = value.clone(),
 
         _ => return Err(format!("Unknown setting: {}.{}", section, key)),
     }
@@ -7520,11 +7534,11 @@ pub fn maybe_show_palette_first_run_notice(app: &tauri::AppHandle) {
         Err(e) => {
             // Don't write the marker. The fallback consent surface is
             // the visible "Minutes Palette" branding inside the
-            // overlay itself plus the dedicated Settings UI row that
-            // landed in this same slice. A user who hits ⌘⇧K
+            // overlay itself plus the dedicated Settings row under
+            // Shortcuts → Command palette. A user who hits ⌘⇧K
             // expecting VS Code's Delete Line will at least see
             // "Minutes Palette" in the overlay header and can find
-            // the toggle in Settings → Command Palette.
+            // the toggle in Settings → Shortcuts → Command palette.
             eprintln!(
                 "[palette] first-run notification failed: {} (will retry on next launch)",
                 e

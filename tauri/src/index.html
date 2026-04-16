@@ -4286,6 +4286,23 @@
         </div>
       </div>
 
+      <!-- Command Palette -->
+      <div class="settings-section">
+        <div class="about-item-title">COMMAND PALETTE</div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Keyboard shortcut</div>
+            <select class="shortcut-select settings-field" id="settings-palette-shortcut-select">
+              <option value="CmdOrCtrl+Shift+K">Cmd+Shift+K</option>
+              <option value="CmdOrCtrl+Shift+O">Cmd+Shift+O</option>
+              <option value="CmdOrCtrl+Shift+U">Cmd+Shift+U</option>
+            </select>
+            <div class="about-controls-meta" id="settings-palette-shortcut-status">Open the Minutes command palette from any app.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-palette-shortcut">Off</button>
+        </div>
+      </div>
+
       <!-- Transcription -->
       <div class="settings-section">
         <div class="about-item-title">TRANSCRIPTION</div>
@@ -7562,6 +7579,64 @@
       setSettingsToggle('settings-live-shortcut', settings.enabled);
       const select = document.getElementById('settings-live-shortcut-select');
       if (select) select.value = settings.shortcut;
+    }).catch(() => { });
+
+    // ── Command palette shortcut settings ──
+    // Backend (cmd_set_palette_shortcut at commands.rs:7356) exists and
+    // handles registration + collision detection. Without this UI the
+    // feature ships default-on with a first-run notification pointing
+    // at a page that didn't exist. See the 2026-04-16 settings audit.
+    function setPaletteShortcutStatus(text, isError) {
+      const el = document.getElementById('settings-palette-shortcut-status');
+      if (!el) return;
+      el.textContent = text;
+      el.style.color = isError ? 'var(--red)' : '';
+    }
+    document.getElementById('settings-palette-shortcut').addEventListener('click', async () => {
+      const select = document.getElementById('settings-palette-shortcut-select');
+      const currentEnabled = document.getElementById('settings-palette-shortcut').textContent === 'On';
+      try {
+        const settings = await invoke('cmd_set_palette_shortcut', {
+          enabled: !currentEnabled,
+          shortcut: select.value,
+        });
+        setSettingsToggle('settings-palette-shortcut', settings.enabled);
+        setPaletteShortcutStatus(
+          settings.enabled
+            ? `Active - ${settings.shortcut}. Open the Minutes command palette from any app.`
+            : 'Open the Minutes command palette from any app.',
+          false,
+        );
+      } catch (e) {
+        setPaletteShortcutStatus(String(e), true);
+      }
+    });
+    document.getElementById('settings-palette-shortcut-select').addEventListener('change', async (e) => {
+      const enabled = document.getElementById('settings-palette-shortcut').textContent === 'On';
+      if (!enabled) {
+        // Not enabled yet — don't try to register, just remember the choice.
+        setPaletteShortcutStatus(`${e.target.value} selected. Toggle the palette shortcut on when you're ready to use it.`, false);
+        return;
+      }
+      try {
+        const settings = await invoke('cmd_set_palette_shortcut', {
+          enabled: true,
+          shortcut: e.target.value,
+        });
+        setSettingsToggle('settings-palette-shortcut', settings.enabled);
+        setPaletteShortcutStatus(`Active - ${settings.shortcut}. Open the Minutes command palette from any app.`, false);
+      } catch (err) {
+        setPaletteShortcutStatus(String(err), true);
+      }
+    });
+    // Load initial palette shortcut state
+    invoke('cmd_palette_settings').then(settings => {
+      setSettingsToggle('settings-palette-shortcut', settings.enabled);
+      const select = document.getElementById('settings-palette-shortcut-select');
+      if (select && settings.shortcut) select.value = settings.shortcut;
+      if (settings.enabled) {
+        setPaletteShortcutStatus(`Active - ${settings.shortcut}. Open the Minutes command palette from any app.`, false);
+      }
     }).catch(() => { });
 
     // ── Unified Shortcut Recorder ──────────────────────────────

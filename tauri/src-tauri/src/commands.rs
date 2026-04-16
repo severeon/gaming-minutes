@@ -5732,6 +5732,8 @@ pub fn cmd_get_settings() -> serde_json::Value {
             "cooldown_minutes": config.call_detection.cooldown_minutes,
             "apps": config.call_detection.apps,
             "google_meet_enabled": call_detection_has_sentinel(&config, "google-meet"),
+            "stop_when_call_ends": config.call_detection.stop_when_call_ends,
+            "call_end_stop_countdown_secs": config.call_detection.call_end_stop_countdown_secs,
         },
         "dictation": {
             "model": config.dictation.model,
@@ -5872,6 +5874,21 @@ pub fn cmd_set_setting(section: String, key: String, value: String) -> Result<St
         }
         ("call_detection", "google_meet_enabled") => {
             set_call_detection_sentinel(&mut config, "google-meet", value == "true");
+        }
+        ("call_detection", "stop_when_call_ends") => {
+            config.call_detection.stop_when_call_ends = value == "true";
+        }
+        ("call_detection", "call_end_stop_countdown_secs") => {
+            let parsed: u64 = value
+                .parse()
+                .map_err(|_| "call_end_stop_countdown_secs must be a number")?;
+            // 1s minimum: the detector clamps with max(1) anyway, but reject 0
+            // at the settings boundary so a misclick in the UI doesn't persist
+            // a nonsensical "0s" countdown.
+            if parsed == 0 {
+                return Err("call_end_stop_countdown_secs must be at least 1".into());
+            }
+            config.call_detection.call_end_stop_countdown_secs = parsed;
         }
 
         // Dictation

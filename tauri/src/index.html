@@ -4503,6 +4503,21 @@
           </div>
           <button class="btn btn-secondary btn-sm toggle-btn" id="settings-call-detection-google-meet">Off</button>
         </div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Stop when call ends</div>
+            <div class="about-controls-meta">When the detected call app exits mid-recording, show a countdown prompt
+              with Stop now and Keep recording. Only applies to recordings started from the call-detection banner.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm toggle-btn" id="settings-call-detection-stop-when-call-ends">Off</button>
+        </div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Auto-stop countdown</div>
+            <div class="about-controls-meta">Seconds to wait before stopping when the call ends.</div>
+            <input type="number" id="settings-call-detection-countdown-secs" min="1" class="settings-field">
+          </div>
+        </div>
       </div>
 
       <!-- Privacy -->
@@ -7130,6 +7145,8 @@
           document.getElementById('settings-call-detection-polling-interval').value = String(s.call_detection.poll_interval_secs ?? 1);
           document.getElementById('settings-call-detection-cooldown').value = String(s.call_detection.cooldown_minutes ?? 5);
           setSettingsToggle('settings-call-detection-google-meet', Boolean(s.call_detection.google_meet_enabled));
+          setSettingsToggle('settings-call-detection-stop-when-call-ends', Boolean(s.call_detection.stop_when_call_ends));
+          document.getElementById('settings-call-detection-countdown-secs').value = String(s.call_detection.call_end_stop_countdown_secs ?? 30);
         }
         // Dictation settings
         if (s.dictation) {
@@ -7442,6 +7459,23 @@
       const next = !Boolean(s.call_detection.google_meet_enabled);
       await invoke('cmd_set_setting', { section: 'call_detection', key: 'google_meet_enabled', value: String(next) });
       setSettingsToggle('settings-call-detection-google-meet', next);
+    });
+    document.getElementById('settings-call-detection-stop-when-call-ends').addEventListener('click', async () => {
+      const s = await invoke('cmd_get_settings');
+      const next = !Boolean(s.call_detection.stop_when_call_ends);
+      await invoke('cmd_set_setting', { section: 'call_detection', key: 'stop_when_call_ends', value: String(next) });
+      setSettingsToggle('settings-call-detection-stop-when-call-ends', next);
+    });
+    document.getElementById('settings-call-detection-countdown-secs').addEventListener('change', async (e) => {
+      try {
+        await invoke('cmd_set_setting', { section: 'call_detection', key: 'call_end_stop_countdown_secs', value: e.target.value });
+      } catch (err) {
+        // Reject of 0/invalid — snap back to the persisted value rather than
+        // leaving the user staring at a rejected input.
+        console.error('countdown secs:', err);
+        const s = await invoke('cmd_get_settings');
+        e.target.value = String(s.call_detection.call_end_stop_countdown_secs ?? 30);
+      }
     });
 
     // Dictation settings handlers — guarded for removed HTML elements

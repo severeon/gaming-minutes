@@ -4471,6 +4471,34 @@
             <div class="about-controls-meta" id="settings-agent-command-status"></div>
           </div>
         </div>
+        <div class="about-controls is-hidden" id="settings-ollama-url-row">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Ollama URL</div>
+            <div class="about-controls-meta">Base URL for your local Ollama server.</div>
+            <input type="text" id="settings-ollama-url" class="settings-field" placeholder="http://localhost:11434" spellcheck="false">
+            <div class="about-controls-meta" id="settings-ollama-url-status"></div>
+          </div>
+        </div>
+        <div class="about-controls is-hidden" id="settings-ollama-model-row">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Ollama model</div>
+            <div class="about-controls-meta">Name of a model you've pulled in Ollama (e.g. llama3.2, qwen2.5, gemma3).</div>
+            <input type="text" id="settings-ollama-model" class="settings-field" placeholder="llama3.2" spellcheck="false">
+          </div>
+        </div>
+      </div>
+
+      <!-- Pipeline Hooks -->
+      <div class="settings-section">
+        <div class="about-item-title">PIPELINE HOOKS</div>
+        <div class="about-controls">
+          <div class="about-controls-group">
+            <div class="about-controls-copy">Post-record command</div>
+            <div class="about-controls-meta">Shell command run after each recording is processed. The transcript file path is appended as the final argument. Leave blank to disable.</div>
+            <input type="text" id="settings-hooks-post-record" class="settings-field" placeholder="/path/to/script.sh" spellcheck="false">
+            <div class="about-controls-meta" id="settings-hooks-post-record-status"></div>
+          </div>
+        </div>
       </div>
 
       <!-- Call Detection -->
@@ -7097,6 +7125,21 @@
         // Agent command picker (visible when engine = "agent")
         const agentCmdRow = document.getElementById('settings-agent-command-row');
         agentCmdRow.classList.toggle('is-hidden', s.summarization.engine !== 'agent');
+        // Ollama URL + model (visible when engine = "ollama")
+        const ollamaUrlRow = document.getElementById('settings-ollama-url-row');
+        const ollamaModelRow = document.getElementById('settings-ollama-model-row');
+        const ollamaVisible = s.summarization.engine === 'ollama';
+        ollamaUrlRow.classList.toggle('is-hidden', !ollamaVisible);
+        ollamaModelRow.classList.toggle('is-hidden', !ollamaVisible);
+        document.getElementById('settings-ollama-url').value = s.summarization.ollama_url || '';
+        document.getElementById('settings-ollama-model').value = s.summarization.ollama_model || '';
+        document.getElementById('settings-ollama-url-status').textContent =
+          s.summarization.ollama_reachable ? 'Reachable' : 'Not reachable — is Ollama running?';
+        // Post-record hook
+        const postRecord = (s.hooks && s.hooks.post_record) || '';
+        document.getElementById('settings-hooks-post-record').value = postRecord;
+        document.getElementById('settings-hooks-post-record-status').textContent =
+          postRecord ? 'Active. Transcript path is appended on every recording.' : '';
         try {
           const agentCmdSel = document.getElementById('settings-agent-command');
           const sumAgents = await invoke('cmd_list_agents');
@@ -7402,12 +7445,59 @@
     document.getElementById('settings-summarization-engine').addEventListener('change', async (e) => {
       await invoke('cmd_set_setting', { section: 'summarization', key: 'engine', value: e.target.value });
       document.getElementById('settings-agent-command-row').classList.toggle('is-hidden', e.target.value !== 'agent');
+      const ollamaVisible = e.target.value === 'ollama';
+      document.getElementById('settings-ollama-url-row').classList.toggle('is-hidden', !ollamaVisible);
+      document.getElementById('settings-ollama-model-row').classList.toggle('is-hidden', !ollamaVisible);
       const s = await invoke('cmd_get_settings'); updateSumStatus(s);
+      if (ollamaVisible) {
+        document.getElementById('settings-ollama-url-status').textContent =
+          s.summarization.ollama_reachable ? 'Reachable' : 'Not reachable — is Ollama running?';
+      }
     });
     document.getElementById('settings-agent-command').addEventListener('change', async (e) => {
       await invoke('cmd_set_setting', { section: 'summarization', key: 'agent_command', value: e.target.value });
       const agents = await invoke('cmd_list_agents');
       document.getElementById('settings-agent-command-status').textContent = agents.find(a => a.name === e.target.value) ? 'Installed' : 'Not found on this machine';
+    });
+    // Ollama URL + model — save on change (fires on blur for text inputs),
+    // then re-ping reachability so the user sees the effect immediately.
+    document.getElementById('settings-ollama-url').addEventListener('change', async (e) => {
+      const value = e.target.value.trim() || 'http://localhost:11434';
+      e.target.value = value;
+      try {
+        await invoke('cmd_set_setting', { section: 'summarization', key: 'ollama_url', value });
+        const s = await invoke('cmd_get_settings');
+        updateSumStatus(s);
+        document.getElementById('settings-ollama-url-status').textContent =
+          s.summarization.ollama_reachable ? 'Reachable' : 'Not reachable — is Ollama running?';
+      } catch (err) {
+        document.getElementById('settings-ollama-url-status').textContent = String(err);
+      }
+    });
+    document.getElementById('settings-ollama-model').addEventListener('change', async (e) => {
+      const value = e.target.value.trim() || 'llama3.2';
+      e.target.value = value;
+      try {
+        await invoke('cmd_set_setting', { section: 'summarization', key: 'ollama_model', value });
+        const s = await invoke('cmd_get_settings');
+        updateSumStatus(s);
+      } catch (err) {
+        console.error('ollama model save:', err);
+      }
+    });
+    // Post-record hook — empty string clears the hook (Rust side maps "" → None).
+    document.getElementById('settings-hooks-post-record').addEventListener('change', async (e) => {
+      const value = e.target.value;
+      try {
+        await invoke('cmd_set_setting', { section: 'hooks', key: 'post_record', value });
+        const trimmed = value.trim();
+        document.getElementById('settings-hooks-post-record-status').textContent =
+          trimmed ? 'Active. Transcript path is appended on every recording.' : 'Disabled.';
+        document.getElementById('settings-hooks-post-record-status').style.color = '';
+      } catch (err) {
+        document.getElementById('settings-hooks-post-record-status').textContent = String(err);
+        document.getElementById('settings-hooks-post-record-status').style.color = 'var(--red)';
+      }
     });
     document.getElementById('settings-screen-context').addEventListener('click', async () => {
       const s = await invoke('cmd_get_settings');

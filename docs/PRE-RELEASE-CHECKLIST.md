@@ -124,10 +124,13 @@ The `minutes.mcpb` Claude Desktop marketplace bundle is NOT built by any release
 # From the repo root, after Phase 4 has completed (MCP and SDK already published).
 (cd crates/mcp && npm run build)   # ensures dist/ and dist-ui/ are fresh
 mcpb pack                            # writes minutes.mcpb at repo root
+./scripts/check_mcpb_bundle.sh minutes.mcpb
 gh release upload vX.Y.Z minutes.mcpb --repo silverstein/minutes
 ```
 
 `mcpb pack` writes the bundle to `minutes.mcpb` at the repo root, internally versioned to whatever is in `manifest.json` (so make sure that file was bumped in Phase 3). The release page convention is the unversioned filename `minutes.mcpb`, matching v0.10.2 and earlier.
+
+The bundle check is not optional. We have already shipped a broken extension once where `.mcpbignore` excluded `crates/mcp/node_modules/yaml/dist/schema/yaml-1.1/*`, which let the server answer `initialize` and then crash immediately in Claude Desktop with `Cannot find module '../schema/yaml-1.1/merge.js'`.
 
 ## Phase 7: Watch the release workflows
 

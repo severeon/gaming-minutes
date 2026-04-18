@@ -27,6 +27,13 @@
  * No shell interpolation — safe from injection.
  */
 
+// ── Crash tracer must load before any other import (see ./crashTracer.ts) ──
+// Issue #149 — Claude Desktop 1.3109.0 with MCP protocol 2025-11-25 kills
+// the extension server with no stderr visible in the host log. The tracer
+// writes synchronously to ~/.minutes/logs/mcp-crash.log so a reinstall
+// produces a real trace instead of a silent exit.
+import { crashTrace, CRASH_LOG_PATH } from "./crashTracer.js";
+
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -51,6 +58,8 @@ import {
   validatePathInDirectories,
   validatePathInDirectory,
 } from "./paths.js";
+
+crashTrace("imports-complete");
 
 const UI_RESOURCE_URI = "ui://minutes/dashboard";
 const MCP_TOOLS_DOCS_BASE_URL = "https://useminutes.app/docs/mcp/tools";
@@ -683,10 +692,12 @@ function parseJsonOutput(stdout: string): any {
 
 // ── MCP Server ──────────────────────────────────────────────
 
+crashTrace("pre-mcp-server-construct");
 const server = new McpServer({
   name: "minutes",
   version: MCP_SERVER_VERSION,
 });
+crashTrace("post-mcp-server-construct");
 
 // Declare MCP Apps extension support so hosts classify this server as interactive.
 // The `extensions` field is part of the draft MCP spec (SEP-1724) — not yet in the
@@ -2608,14 +2619,27 @@ registerTool(
 // ── Start server ────────────────────────────────────────────
 
 async function main() {
+  crashTrace("main-start");
   const transport = new StdioServerTransport();
+  crashTrace("transport-created");
   await server.connect(transport);
+  crashTrace("transport-connected");
   console.error("Minutes MCP server running on stdio");
 }
 
+crashTrace("pre-main-guard", {
+  argv1: process.argv[1] ?? null,
+  resolvedArgv1: process.argv[1] ? resolve(process.argv[1]) : null,
+  __filename,
+  match: process.argv[1] ? resolve(process.argv[1]) === __filename : false,
+});
+
 if (process.argv[1] && resolve(process.argv[1]) === __filename) {
   main().catch((error) => {
+    crashTrace("main-rejected", error);
     console.error("Fatal error:", error);
     process.exit(1);
   });
+} else {
+  crashTrace("main-skipped-argv-mismatch");
 }

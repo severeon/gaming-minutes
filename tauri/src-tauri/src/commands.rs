@@ -5470,6 +5470,7 @@ pub fn cmd_get_meeting_detail(path: String) -> Result<MeetingDetail, String> {
         ContentType::Meeting => "meeting",
         ContentType::Memo => "memo",
         ContentType::Dictation => "dictation",
+        ContentType::Game => "game",
     }
     .to_string();
 
@@ -7558,6 +7559,7 @@ mod tests {
             recorded_by: None,
             visibility: None,
             speaker_map: vec![],
+            segment_spans: vec![],
             filter_diagnosis: None,
         };
         let sections = vec![MeetingSection {
@@ -7613,6 +7615,7 @@ mod tests {
             recorded_by: None,
             visibility: None,
             speaker_map: vec![],
+            segment_spans: vec![],
             filter_diagnosis: None,
         };
         let sections = vec![MeetingSection {
@@ -7659,6 +7662,7 @@ mod tests {
             recorded_by: None,
             visibility: None,
             speaker_map: vec![],
+            segment_spans: vec![],
             filter_diagnosis: None,
         };
         let sections = vec![MeetingSection {

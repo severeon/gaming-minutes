@@ -2904,6 +2904,239 @@ registerTool(
   }
 );
 
+// ── Tool: list_games ────────────────────────────────────────
+//
+// Reads TOML campaign files from ~/.minutes/campaigns/ and reports each
+// campaign's name, system, and an approximate session count (markdown files
+// under <meetings_dir>/games/ whose filename references the slug).
+
+registerTool(
+  "list_games",
+  "List tabletop RPG / game campaigns configured under ~/.minutes/campaigns/. Returns each campaign's slug, display name, system, and approximate session count.",
+  {},
+  {
+    title: "List Game Campaigns",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  async () => {
+    try {
+      const campaignsDir = join(MINUTES_HOME, "campaigns");
+      const gamesDir = join(await getEffectiveMeetingsDir(), "games");
+
+      const entries: Array<{
+        slug: string;
+        name: string;
+        system: string;
+        session_count: number;
+      }> = [];
+
+      let campaignFiles: string[] = [];
+      try {
+        const { readdir } = await import("fs/promises");
+        const all = await readdir(campaignsDir);
+        campaignFiles = all.filter((f) => f.endsWith(".toml"));
+      } catch {
+        // Directory missing — no campaigns.
+      }
+
+      let gameFiles: string[] = [];
+      try {
+        const { readdir } = await import("fs/promises");
+        const all = await readdir(gamesDir);
+        gameFiles = all.filter((f) => f.endsWith(".md"));
+      } catch {
+        // Directory missing — no sessions.
+      }
+
+      for (const file of campaignFiles) {
+        const slug = file.replace(/\.toml$/, "");
+        const path = join(campaignsDir, file);
+        try {
+          const body = await readFile(path, "utf-8");
+          const name = body.match(/^\s*name\s*=\s*"([^"]*)"/m)?.[1] ?? slug;
+          const system = body.match(/^\s*system\s*=\s*"([^"]*)"/m)?.[1] ?? "5e";
+          const sessionCount = gameFiles.filter((f) => f.includes(slug)).length;
+          entries.push({ slug, name, system, session_count: sessionCount });
+        } catch {
+          // Skip unreadable campaign files silently.
+        }
+      }
+
+      entries.sort((a, b) => a.slug.localeCompare(b.slug));
+
+      if (entries.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text:
+                "No campaigns yet. Create one with: minutes games init --name \"<campaign name>\" --system 5e",
+            },
+          ],
+          structuredContent: { campaigns: [] },
+        };
+      }
+
+      const text = entries
+        .map(
+          (e) =>
+            `- ${e.slug} — ${e.name} (${e.system}) — ${e.session_count} session${e.session_count === 1 ? "" : "s"}`
+        )
+        .join("\n");
+      return {
+        content: [{ type: "text" as const, text: `Campaigns:\n\n${text}` }],
+        structuredContent: { campaigns: entries },
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Failed to list campaigns: ${error?.message ?? String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ── Tool: get_game_transcript ───────────────────────────────
+//
+// Reads a Game-type meeting file and returns either the full transcript with
+// segment-span metadata, or — when `in_game_only=true` — only the lines
+// covered by `in_game` spans. Useful for DM-assistant agents building recaps
+// that should skip banter and mechanics.
+
+registerTool(
+  "get_game_transcript",
+  "Get the transcript of a tabletop RPG session. When in_game_only=true, returns only the lines the banter-fold classifier marked as in_game. Default returns the full verbatim transcript plus span metadata so the caller can decide what to filter.",
+  {
+    meeting: z
+      .string()
+      .describe("Path to the meeting markdown file (under <meetings_dir>/games/)"),
+    in_game_only: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("When true, return only the transcript lines classified as `in_game`."),
+  },
+  {
+    title: "Get Game Transcript",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  async ({ meeting, in_game_only }) => {
+    try {
+      const meetingsDir = await getEffectiveMeetingsDir();
+      const resolved = validatePathInDirectory(meeting, meetingsDir, [".md"]);
+      const content = await readFile(resolved, "utf-8");
+
+      // Parse frontmatter minimally. We don't need every field — just
+      // segment_spans and the body.
+      const fmMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+      if (!fmMatch) {
+        return {
+          content: [
+            { type: "text" as const, text: content },
+          ],
+          structuredContent: { transcript: content, spans: [] },
+        };
+      }
+      const fmText = fmMatch[1];
+      const body = fmMatch[2];
+
+      // Extract transcript body (everything after ## Transcript header).
+      const transcriptMatch = body.match(/## Transcript\n\n([\s\S]*?)$/);
+      const transcript = transcriptMatch ? transcriptMatch[1].trimEnd() : body;
+      const allLines = transcript.split("\n");
+
+      // Parse segment_spans from the YAML — cheap line-oriented parse, good
+      // enough for the advisory-only metadata shape.
+      type Span = {
+        first_line: number;
+        last_line: number;
+        class: string;
+        reason: string;
+      };
+      const spans: Span[] = [];
+      const spansBlockMatch = fmText.match(/^segment_spans:\n([\s\S]*?)(?=^\S|$)/m);
+      if (spansBlockMatch) {
+        const block = spansBlockMatch[1];
+        const entries = block.split(/^- /m).filter((s) => s.trim().length > 0);
+        for (const entry of entries) {
+          const first = entry.match(/first_line:\s*(\d+)/);
+          const last = entry.match(/last_line:\s*(\d+)/);
+          const cls = entry.match(/class:\s*(\w+)/);
+          const reason = entry.match(/reason:\s*"?([^"\n]*)"?/);
+          if (first && last && cls) {
+            spans.push({
+              first_line: parseInt(first[1], 10),
+              last_line: parseInt(last[1], 10),
+              class: cls[1],
+              reason: (reason?.[1] ?? "").trim(),
+            });
+          }
+        }
+      }
+
+      if (in_game_only && spans.length > 0) {
+        const selected: string[] = [];
+        for (const span of spans) {
+          if (span.class !== "in_game") continue;
+          for (let line = span.first_line; line <= span.last_line; line++) {
+            const idx = line - 1;
+            if (idx >= 0 && idx < allLines.length) {
+              selected.push(allLines[idx]);
+            }
+          }
+        }
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: selected.length > 0
+                ? selected.join("\n")
+                : "No in-game spans found — returning empty. Use in_game_only=false to see the full transcript.",
+            },
+          ],
+          structuredContent: {
+            transcript: selected.join("\n"),
+            spans,
+            filter: "in_game",
+            path: resolved,
+          },
+        };
+      }
+
+      return {
+        content: [{ type: "text" as const, text: transcript }],
+        structuredContent: {
+          transcript,
+          spans,
+          filter: in_game_only ? "in_game" : "all",
+          path: resolved,
+        },
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Could not read game transcript: ${error?.message ?? String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
 // ── Start server ────────────────────────────────────────────
 
 async function main() {

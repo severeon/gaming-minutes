@@ -700,6 +700,7 @@ pub fn audio_processed_event(
         ContentType::Meeting => "meeting".to_string(),
         ContentType::Memo => "memo".to_string(),
         ContentType::Dictation => "dictation".to_string(),
+        ContentType::Game => "game".to_string(),
     };
 
     MinutesEvent::AudioProcessed {
@@ -720,6 +721,7 @@ pub fn recording_completed_event(
         ContentType::Meeting => "meeting".to_string(),
         ContentType::Memo => "memo".to_string(),
         ContentType::Dictation => "dictation".to_string(),
+        ContentType::Game => "game".to_string(),
     };
 
     MinutesEvent::RecordingCompleted {

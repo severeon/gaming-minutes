@@ -532,8 +532,8 @@ enum Commands {
         /// Path to audio file (.wav, .m4a, .mp3)
         path: PathBuf,
 
-        /// Content type: meeting or memo
-        #[arg(short = 't', long, default_value = "memo")]
+        /// Content type: meeting, memo, or game
+        #[arg(short = 't', long, default_value = "memo", value_parser = ["meeting", "memo", "game"])]
         content_type: String,
 
         /// Optional context note (e.g., "idea about onboarding while driving")
@@ -544,9 +544,21 @@ enum Commands {
         #[arg(long)]
         title: Option<String>,
 
+        /// Campaign slug to apply when `--type game`. Loads the matching
+        /// campaign TOML from `~/.minutes/campaigns/<slug>.toml` to seed
+        /// the decode-hint lexicon with party/NPC/place names.
+        #[arg(long)]
+        campaign: Option<String>,
+
         /// Transcription language (e.g. "en", "ur", "es"). Overrides config.toml setting.
         #[arg(short, long)]
         language: Option<String>,
+    },
+
+    /// Tabletop RPG / game session management — campaigns + session processing.
+    Games {
+        #[command(subcommand)]
+        action: GamesAction,
     },
 
     /// Watch a folder for new audio files and process them automatically
@@ -870,6 +882,47 @@ enum VaultAction {
     Unlink,
     /// Copy all existing meetings to vault (catch-up for copy strategy)
     Sync,
+}
+
+#[derive(Subcommand)]
+enum GamesAction {
+    /// Create a new campaign file at ~/.minutes/campaigns/<slug>.toml
+    Init {
+        /// Campaign display name (e.g. "The Shattered Isles")
+        #[arg(long)]
+        name: String,
+
+        /// RPG system identifier (5e, pf2e, cocv7, or free-form)
+        #[arg(long, default_value = "5e")]
+        system: String,
+    },
+
+    /// List all known campaigns with session counts
+    List,
+
+    /// Show a campaign's full contents
+    Show {
+        /// Campaign slug (file stem under ~/.minutes/campaigns/)
+        slug: String,
+    },
+
+    /// Process an audio file as a tabletop RPG session
+    Process {
+        /// Path to audio file (.wav, .m4a, .mp3)
+        path: PathBuf,
+
+        /// Campaign slug to apply (loads name/party/NPCs/places into decode hints)
+        #[arg(long)]
+        campaign: Option<String>,
+
+        /// Optional title
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Transcription language (e.g. "en"). Overrides config.toml setting.
+        #[arg(short, long)]
+        language: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1242,6 +1295,7 @@ fn main() -> Result<()> {
             content_type,
             note,
             title,
+            campaign,
             language,
         } => {
             if let Some(lang) = language {
@@ -1251,12 +1305,19 @@ fn main() -> Result<()> {
             if let Some(ref n) = note {
                 minutes_core::notes::save_context(n)?;
             }
-            let result = cmd_process(&path, &content_type, title.as_deref(), &config);
+            let result = cmd_process(
+                &path,
+                &content_type,
+                title.as_deref(),
+                campaign.as_deref(),
+                &config,
+            );
             if note.is_some() {
                 minutes_core::notes::cleanup();
             }
             result
         }
+        Commands::Games { action } => cmd_games(action, &config),
         Commands::Watch { dir, language } => {
             if let Some(lang) = language {
                 config.transcription.language = Some(lang);
@@ -3110,20 +3171,27 @@ fn cmd_process(
     path: &Path,
     content_type: &str,
     title: Option<&str>,
+    campaign: Option<&str>,
     config: &Config,
 ) -> Result<()> {
     if !path.exists() {
         anyhow::bail!("file not found: {}", path.display());
     }
 
-    let ct = match content_type {
-        "meeting" => ContentType::Meeting,
-        "memo" => ContentType::Memo,
-        other => anyhow::bail!("unknown content type: {}. Use 'meeting' or 'memo'.", other),
-    };
-
     config.ensure_dirs()?;
-    let result = minutes_core::process(path, ct, title, config)?;
+    let result = if content_type == "game" {
+        minutes_core::pipeline::process_game(path, title, campaign, config)?
+    } else {
+        let ct = match content_type {
+            "meeting" => ContentType::Meeting,
+            "memo" => ContentType::Memo,
+            other => anyhow::bail!(
+                "unknown content type: {}. Use 'meeting', 'memo', or 'game'.",
+                other
+            ),
+        };
+        minutes_core::process(path, ct, title, config)?
+    };
     eprintln!("Saved: {}", result.path.display());
 
     // Update relationship graph index
@@ -3139,6 +3207,108 @@ fn cmd_process(
     }))?;
     println!("{}", json);
     Ok(())
+}
+
+fn cmd_games(action: GamesAction, config: &Config) -> Result<()> {
+    use minutes_core::games;
+    match action {
+        GamesAction::Init { name, system } => {
+            config.ensure_dirs()?;
+            let slug = games::slugify(&name);
+            let path = games::campaign_path(config, &slug);
+            if path.exists() {
+                anyhow::bail!("campaign '{}' already exists at {}", slug, path.display());
+            }
+            let campaign = games::GameCampaign::new(&name, &system);
+            let written = games::save_campaign(config, &slug, &campaign)?;
+            eprintln!(
+                "Created campaign '{}' ({}): {}",
+                slug,
+                system,
+                written.display()
+            );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "slug": slug,
+                    "name": name,
+                    "system": system,
+                    "path": written.display().to_string(),
+                }))?
+            );
+            Ok(())
+        }
+        GamesAction::List => {
+            let summaries = games::list_campaigns(config)?;
+            if summaries.is_empty() {
+                eprintln!(
+                    "No campaigns found in {}",
+                    config.games.campaigns_dir.display()
+                );
+            } else {
+                for s in &summaries {
+                    eprintln!(
+                        "  {} — {} ({}) — {} session{}",
+                        s.slug,
+                        s.name,
+                        s.system,
+                        s.session_count,
+                        if s.session_count == 1 { "" } else { "s" }
+                    );
+                }
+            }
+            let json: Vec<_> = summaries
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "slug": s.slug,
+                        "name": s.name,
+                        "system": s.system,
+                        "session_count": s.session_count,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&json)?);
+            Ok(())
+        }
+        GamesAction::Show { slug } => {
+            let campaign = games::load_campaign(config, &slug)?
+                .ok_or_else(|| anyhow::anyhow!("campaign not found: {}", slug))?;
+            println!("{}", serde_json::to_string_pretty(&campaign)?);
+            Ok(())
+        }
+        GamesAction::Process {
+            path,
+            campaign,
+            title,
+            language,
+        } => {
+            if !path.exists() {
+                anyhow::bail!("file not found: {}", path.display());
+            }
+            let mut config = config.clone();
+            if let Some(lang) = language {
+                config.transcription.language = Some(lang);
+            }
+            config.ensure_dirs()?;
+            let result = minutes_core::pipeline::process_game(
+                &path,
+                title.as_deref(),
+                campaign.as_deref(),
+                &config,
+            )?;
+            eprintln!("Saved: {}", result.path.display());
+            let json = serde_json::to_string_pretty(&serde_json::json!({
+                "status": "done",
+                "file": result.path.display().to_string(),
+                "title": result.title,
+                "words": result.word_count,
+                "type": "game",
+            }))?;
+            println!("{}", json);
+            Ok(())
+        }
+    }
 }
 
 /// Process an existing WAV file as a mock recording with full diagnostic output.

@@ -154,6 +154,14 @@
     {
       "name": "knowledge_status",
       "description": "Show the current state of the knowledge base — configuration, adapter, people count, log entries"
+    },
+    {
+      "name": "list_games",
+      "description": "List tabletop RPG / game campaigns configured under ~/.minutes/campaigns/. Returns each campaign's slug, display name, system, and approximate session count."
+    },
+    {
+      "name": "get_game_transcript",
+      "description": "Get a tabletop RPG session transcript. When in_game_only=true, returns only the lines the banter-fold classifier marked as `in_game`; otherwise returns the full verbatim transcript plus span metadata."
     }
   ],
   "prompts": [

@@ -21,6 +21,46 @@ pub enum ContentType {
     Meeting,
     Memo,
     Dictation,
+    /// Tabletop RPG / D&D session capture. Routed to `games/` subdir. Uses a
+    /// chaos-tuned decode hint profile (permissive filters, RPG lexicon boost)
+    /// and an optional post-transcription banter-fold classifier that writes
+    /// advisory `segment_spans` into frontmatter.
+    Game,
+}
+
+/// Classification for a run of transcript lines produced by the banter-fold
+/// classifier. Every line of a Game-type transcript is covered by exactly one
+/// span; non-`InGame` spans are rendered as collapsible `<details>` blocks so
+/// the full verbatim transcript is preserved but the reading surface focuses
+/// on the game fiction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SpanClass {
+    /// In-character dialogue, narration, description.
+    InGame,
+    /// Out-of-character social chat that isn't mechanics or side conversation.
+    Banter,
+    /// Dice rolls, rule lookups, character sheet bookkeeping.
+    Mechanical,
+    /// Pizza orders, phone checks, unrelated interruptions.
+    SideConversation,
+    /// Explicit pauses / breaks / bathroom runs.
+    Break,
+    /// Classifier couldn't decide.
+    Unknown,
+}
+
+/// Advisory classification span over transcript lines. Written into frontmatter
+/// as `segment_spans` by the Game-mode banter-fold classifier. `first_line` and
+/// `last_line` are 1-based and inclusive; every transcript line must belong to
+/// exactly one span (no gaps, no overlaps).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SegmentSpan {
+    pub first_line: usize,
+    pub last_line: usize,
+    pub class: SpanClass,
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// Output status markers.
@@ -73,6 +113,12 @@ pub struct Frontmatter {
     pub visibility: Option<Visibility>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub speaker_map: Vec<crate::diarize::SpeakerAttribution>,
+    /// Advisory classification spans from the Game-mode banter-fold classifier.
+    /// Each span covers a contiguous range of transcript lines; non-`InGame`
+    /// spans are rendered as `<details>` collapsibles. Empty for non-Game
+    /// content types or when the classifier is unavailable / failed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub segment_spans: Vec<SegmentSpan>,
     /// Diagnostic string from the transcription filter pipeline.
     /// Not serialized to YAML — only used for the NoSpeech hint in rendered markdown.
     #[serde(skip)]
@@ -275,10 +321,209 @@ fn render_markdown(
     }
 
     content.push_str("## Transcript\n\n");
-    content.push_str(transcript);
+    if frontmatter.r#type == ContentType::Game && !frontmatter.segment_spans.is_empty() {
+        let folded = fold_non_game_spans(transcript, &frontmatter.segment_spans);
+        content.push_str(&folded);
+    } else {
+        content.push_str(transcript);
+    }
     content.push('\n');
 
     Ok(content)
+}
+
+/// Render a Game transcript with non-`InGame` spans wrapped in collapsible
+/// `<details>` blocks. Full verbatim text is preserved — spans are advisory.
+///
+/// Adjacent non-`InGame` spans (any mix of `Banter`, `SideConversation`,
+/// `Mechanical`, `Break`, `Unknown`) are merged into a single `<details>` so
+/// the fold renders as one collapsible per continuous non-game stretch.
+///
+/// Span line numbers are 1-based and inclusive. Lines beyond the transcript
+/// are silently truncated; lines the classifier failed to cover are rendered
+/// inline (verbatim) so the transcript stays complete even if the classifier
+/// produced gaps.
+pub fn fold_non_game_spans(body: &str, spans: &[SegmentSpan]) -> String {
+    if spans.is_empty() {
+        return body.to_string();
+    }
+
+    // Preserve the body as-is if there are no lines. A trailing newline on
+    // the input should survive round-tripping.
+    let trailing_newline = body.ends_with('\n');
+    let lines: Vec<&str> = body.lines().collect();
+    if lines.is_empty() {
+        return body.to_string();
+    }
+
+    // Sort spans by first_line so we process them in document order; the
+    // classifier contract is that every line is covered exactly once, but be
+    // tolerant of out-of-order input.
+    let mut sorted: Vec<&SegmentSpan> = spans.iter().collect();
+    sorted.sort_by_key(|span| span.first_line);
+
+    // Build runs: merge adjacent spans with the same in-game/out-of-game
+    // character into a single rendered block.
+    #[derive(Debug)]
+    struct Run {
+        first_line: usize,
+        last_line: usize,
+        in_game: bool,
+        summary: String,
+    }
+
+    let mut runs: Vec<Run> = Vec::new();
+    for span in sorted.iter() {
+        let in_game = matches!(span.class, SpanClass::InGame);
+        let summary_label = span_summary_label(span.class);
+        let reason = span.reason.trim();
+        let line_count = span.last_line.saturating_sub(span.first_line) + 1;
+        let summary = if reason.is_empty() {
+            format!(
+                "{} ({} line{})",
+                summary_label,
+                line_count,
+                plural(line_count)
+            )
+        } else {
+            format!(
+                "{} ({} line{}) — {}",
+                summary_label,
+                line_count,
+                plural(line_count),
+                reason
+            )
+        };
+
+        if let Some(last) = runs.last_mut() {
+            if !in_game && !last.in_game && span.first_line == last.last_line + 1 {
+                last.last_line = span.last_line;
+                last.summary = merge_summaries(&last.summary, &summary);
+                continue;
+            }
+        }
+
+        runs.push(Run {
+            first_line: span.first_line,
+            last_line: span.last_line,
+            in_game,
+            summary,
+        });
+    }
+
+    let mut out = String::with_capacity(body.len() + 64);
+    let mut cursor: usize = 1; // 1-based
+    for run in runs.iter() {
+        // Emit any uncovered lines between the previous run and this one
+        // verbatim (classifier gap guard — should not normally happen).
+        if run.first_line > cursor {
+            for line_no in cursor..run.first_line {
+                if let Some(line) = lines.get(line_no.saturating_sub(1)) {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+
+        let start_idx = run.first_line.saturating_sub(1);
+        let end_idx = run.last_line.min(lines.len());
+        if start_idx >= lines.len() {
+            cursor = run.last_line + 1;
+            continue;
+        }
+        let slice = &lines[start_idx..end_idx];
+        if run.in_game {
+            for line in slice {
+                out.push_str(line);
+                out.push('\n');
+            }
+        } else {
+            out.push_str("<details>");
+            out.push_str("<summary>");
+            out.push_str(&html_escape(&run.summary));
+            out.push_str("</summary>\n\n");
+            for line in slice {
+                out.push_str(line);
+                out.push('\n');
+            }
+            out.push_str("\n</details>\n");
+        }
+        cursor = run.last_line + 1;
+    }
+
+    // Emit any trailing uncovered lines verbatim.
+    for line_no in cursor..=lines.len() {
+        if let Some(line) = lines.get(line_no.saturating_sub(1)) {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    // Preserve original trailing-newline status.
+    if !trailing_newline && out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn span_summary_label(class: SpanClass) -> &'static str {
+    match class {
+        SpanClass::InGame => "In game",
+        SpanClass::Banter => "Banter",
+        SpanClass::Mechanical => "Mechanics",
+        SpanClass::SideConversation => "Side conversation",
+        SpanClass::Break => "Break",
+        SpanClass::Unknown => "Unclassified",
+    }
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+fn merge_summaries(a: &str, b: &str) -> String {
+    // When adjacent non-in-game runs merge, produce a summary like
+    // "Banter + Mechanics (12 lines) — reasons merged".
+    // We keep it cheap: show both labels joined by "+" and the combined
+    // reason string.
+    let (a_label, a_rest) = split_label(a);
+    let (b_label, _b_rest) = split_label(b);
+    let label = if a_label == b_label || a_label.contains(b_label) {
+        a_label.to_string()
+    } else {
+        format!("{} + {}", a_label, b_label)
+    };
+    if a_rest.is_empty() {
+        label
+    } else {
+        format!("{}{}", label, a_rest)
+    }
+}
+
+fn split_label(summary: &str) -> (&str, &str) {
+    match summary.find(" (") {
+        Some(i) => (&summary[..i], &summary[i..]),
+        None => (summary, ""),
+    }
+}
+
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Write a meeting/memo to markdown with YAML frontmatter.
@@ -305,6 +550,7 @@ pub fn write_with_retry_path(
         ContentType::Memo => config.output_dir.join("memos"),
         ContentType::Meeting => config.output_dir.clone(),
         ContentType::Dictation => config.output_dir.join("dictations"),
+        ContentType::Game => config.output_dir.join("games"),
     };
 
     // Ensure output directory exists
@@ -788,6 +1034,7 @@ mod tests {
             recorded_by: None,
             visibility: None,
             speaker_map: vec![],
+            segment_spans: vec![],
             filter_diagnosis: None,
         }
     }
@@ -1418,6 +1665,186 @@ mod tests {
         assert_eq!(yaml_quote("with \"quotes\""), r#""with \"quotes\"""#);
         assert_eq!(yaml_quote("back\\slash"), r#""back\\slash""#);
         assert_eq!(yaml_quote("tab\there"), r#""tab\there""#);
+    }
+
+    #[test]
+    fn fold_non_game_spans_wraps_banter_in_details() {
+        let body = "line 1\nline 2\nline 3\nline 4\n";
+        let spans = vec![
+            SegmentSpan {
+                first_line: 1,
+                last_line: 2,
+                class: SpanClass::InGame,
+                reason: "DM narration".into(),
+            },
+            SegmentSpan {
+                first_line: 3,
+                last_line: 4,
+                class: SpanClass::Banter,
+                reason: "pizza order".into(),
+            },
+        ];
+        let out = fold_non_game_spans(body, &spans);
+        assert!(out.contains("<details>"));
+        assert!(out.contains("</details>"));
+        assert!(out.contains("pizza order"));
+        // In-game lines stay inline.
+        assert!(out.contains("line 1\nline 2\n"));
+        // Banter lines stay verbatim inside the collapsible.
+        assert!(out.contains("line 3\nline 4\n"));
+    }
+
+    #[test]
+    fn fold_non_game_spans_merges_adjacent_non_in_game_runs() {
+        let body = "l1\nl2\nl3\nl4\nl5\n";
+        let spans = vec![
+            SegmentSpan {
+                first_line: 1,
+                last_line: 1,
+                class: SpanClass::InGame,
+                reason: "opener".into(),
+            },
+            SegmentSpan {
+                first_line: 2,
+                last_line: 3,
+                class: SpanClass::Banter,
+                reason: "chat".into(),
+            },
+            SegmentSpan {
+                first_line: 4,
+                last_line: 5,
+                class: SpanClass::Mechanical,
+                reason: "rules".into(),
+            },
+        ];
+        let out = fold_non_game_spans(body, &spans);
+        // Adjacent non-in-game runs should merge into a single <details>
+        // block.
+        let details_count = out.matches("<details>").count();
+        assert_eq!(
+            details_count, 1,
+            "expected a single merged <details>, got: {}",
+            out
+        );
+        // Merged summary should mention both labels.
+        assert!(out.contains("Banter"));
+        assert!(out.contains("Mechanics"));
+    }
+
+    #[test]
+    fn fold_non_game_spans_preserves_verbatim_line_count() {
+        let body = "ALPHA\nBRAVO\nCHARLIE\nDELTA\nECHO\n";
+        let spans = vec![
+            SegmentSpan {
+                first_line: 1,
+                last_line: 2,
+                class: SpanClass::InGame,
+                reason: "".into(),
+            },
+            SegmentSpan {
+                first_line: 3,
+                last_line: 5,
+                class: SpanClass::Banter,
+                reason: "side".into(),
+            },
+        ];
+        let out = fold_non_game_spans(body, &spans);
+        // All 5 original lines must still appear in document order.
+        let positions: Vec<_> = ["ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO"]
+            .iter()
+            .map(|needle| out.find(needle).unwrap_or(usize::MAX))
+            .collect();
+        for i in 1..positions.len() {
+            assert!(
+                positions[i - 1] < positions[i],
+                "line order violated: {:?}",
+                positions
+            );
+        }
+    }
+
+    #[test]
+    fn fold_non_game_spans_is_noop_without_spans() {
+        let body = "line 1\nline 2\n";
+        let out = fold_non_game_spans(body, &[]);
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn fold_non_game_spans_handles_trailing_uncovered_lines() {
+        let body = "a\nb\nc\n";
+        // Classifier only covers lines 1-2; line 3 is left uncovered.
+        let spans = vec![SegmentSpan {
+            first_line: 1,
+            last_line: 2,
+            class: SpanClass::InGame,
+            reason: "".into(),
+        }];
+        let out = fold_non_game_spans(body, &spans);
+        assert!(out.contains("a"));
+        assert!(out.contains("b"));
+        assert!(
+            out.contains("c"),
+            "uncovered trailing line should still appear"
+        );
+    }
+
+    #[test]
+    fn game_content_type_writes_to_games_subdir() {
+        let dir = TempDir::new().unwrap();
+        let config = Config {
+            output_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        let mut fm = test_frontmatter();
+        fm.r#type = ContentType::Game;
+        fm.title = "Session 12".into();
+        let result = write(&fm, "hello world", None, None, &config).unwrap();
+        assert!(
+            result
+                .path
+                .parent()
+                .map(|p| p.ends_with("games"))
+                .unwrap_or(false),
+            "expected games/ subdir, got: {}",
+            result.path.display()
+        );
+        assert_eq!(result.content_type, ContentType::Game);
+    }
+
+    #[test]
+    fn game_frontmatter_renders_details_fold_in_transcript() {
+        let dir = TempDir::new().unwrap();
+        let config = Config {
+            output_dir: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        let mut fm = test_frontmatter();
+        fm.r#type = ContentType::Game;
+        fm.segment_spans = vec![
+            SegmentSpan {
+                first_line: 1,
+                last_line: 1,
+                class: SpanClass::InGame,
+                reason: "opening".into(),
+            },
+            SegmentSpan {
+                first_line: 2,
+                last_line: 2,
+                class: SpanClass::Banter,
+                reason: "pizza".into(),
+            },
+        ];
+        let transcript = "[0:00] The DM describes the cave.\n[0:01] Did anyone order food yet?\n";
+        let result = write(&fm, transcript, None, None, &config).unwrap();
+        let body = fs::read_to_string(&result.path).unwrap();
+        assert!(body.contains("<details>"));
+        assert!(body.contains("Banter"));
+        // Full verbatim transcript must be preserved.
+        assert!(body.contains("[0:00] The DM describes the cave."));
+        assert!(body.contains("[0:01] Did anyone order food yet?"));
     }
 
     #[test]

@@ -23,6 +23,7 @@ pub fn append_backlink(
         ContentType::Meeting => "Meetings",
         ContentType::Memo => "Voice Memos",
         ContentType::Dictation => "Dictations",
+        ContentType::Game => "Game Sessions",
     };
     let link_target = relative_or_absolute_link(note_dir, &result.path);
     let bullet = if let Some(excerpt) = summary_excerpt(summary) {
@@ -299,6 +300,7 @@ mod tests {
             recorded_by: None,
             visibility: None,
             speaker_map: vec![],
+            segment_spans: vec![],
             filter_diagnosis: None,
         };
         fm.decisions = vec![Decision {

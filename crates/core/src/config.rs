@@ -143,6 +143,66 @@ pub struct TranscriptionConfig {
     /// so memory scales linearly with this value (~1.2GB per parakeet-tdt-0.6b worker).
     /// `None` = auto-detect (currently `min(num_chunks, 4)` for parakeet, always 1 for whisper).
     pub chunk_workers: Option<usize>,
+    /// Overlap + tiered pairwise merge configuration for chunked transcription.
+    /// Parakeet-only; whisper path is unchanged.
+    pub chunked: ChunkedConfig,
+}
+
+/// Configuration for overlapping chunked transcription + pairwise merge.
+///
+/// When `overlap_seconds > 0`, consecutive chunks share `overlap_seconds`
+/// of audio. The pairwise merge resolves the overlap region using a
+/// three-tier strategy: exact token match, fuzzy LCS, and an agent-assisted
+/// fallback via the `claude` CLI. If the agent is missing or fails, a
+/// deterministic heuristic (trust the later chunk's forward half) is used.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ChunkedConfig {
+    /// Number of seconds chunks overlap. Default 10s. Set to 0 to disable
+    /// overlap (falls back to non-overlapping chunk ranges + concat).
+    pub overlap_seconds: u32,
+    /// Pairwise merge policy for the overlap region.
+    pub merge: MergeConfig,
+}
+
+impl Default for ChunkedConfig {
+    fn default() -> Self {
+        Self {
+            overlap_seconds: 10,
+            merge: MergeConfig::default(),
+        }
+    }
+}
+
+/// Merge strategy + budget controls for the pairwise merge pass.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MergeConfig {
+    /// Merge strategy: `auto` (tier 1 → 2 → 3), `deterministic` (tier 1 → 2
+    /// only, then heuristic), or `always-agent` (always invoke the agent).
+    pub strategy: String,
+    /// Fuzzy LCS merge threshold — if `edit_distance / len < threshold`,
+    /// tier 2 accepts the automatic merge. Default 0.15.
+    pub fuzzy_threshold: f32,
+    /// Path or name of the agent binary used for tier 3. Resolved via PATH
+    /// if not absolute. Default: `"claude"`.
+    pub agent_binary: String,
+    /// Agent invocation timeout in seconds. Default: 30.
+    pub agent_timeout_secs: u32,
+    /// Per-seam budget cap passed to the agent via `--max-budget-usd`.
+    pub max_budget_usd_per_seam: f32,
+}
+
+impl Default for MergeConfig {
+    fn default() -> Self {
+        Self {
+            strategy: "auto".into(),
+            fuzzy_threshold: 0.15,
+            agent_binary: "claude".into(),
+            agent_timeout_secs: 30,
+            max_budget_usd_per_seam: 0.10,
+        }
+    }
 }
 
 pub const VALID_PARAKEET_MODELS: &[&str] = &["tdt-ctc-110m", "tdt-600m"];
@@ -637,6 +697,7 @@ impl Default for TranscriptionConfig {
             parakeet_fp16_blacklist_reset: false,
             parakeet_vocab: "tdt-600m.tokenizer.vocab".into(),
             chunk_workers: None,
+            chunked: ChunkedConfig::default(),
         }
     }
 }

@@ -185,6 +185,25 @@ pub enum MinutesEvent {
         total_duration_ms: u64,
         engine: String,
     },
+    /// A single overlap seam between chunk N and chunk N+1 was resolved.
+    /// Emitted once per seam during the pairwise merge pass.
+    ///
+    /// `tier` values:
+    /// - `"exact"` — tier 1 exact token overlap match.
+    /// - `"fuzzy"` — tier 2 fuzzy LCS merge within the threshold.
+    /// - `"agent"` — tier 3 agent-assisted merge (LLM resolved).
+    /// - `"fallback"` — deterministic fallback (agent missing / timed out /
+    ///   returned bad JSON / strategy = `"deterministic"`).
+    ///
+    /// `agent_invocations` is 0 for exact/fuzzy/fallback and 1 for agent.
+    TranscribeSeamResolved {
+        audio_path: String,
+        /// Index of the earlier chunk in the pair. Seam sits between this
+        /// chunk and `chunk_index + 1`.
+        chunk_index: u32,
+        tier: String,
+        agent_invocations: u32,
+    },
 }
 
 fn events_path() -> PathBuf {

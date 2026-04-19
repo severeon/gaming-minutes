@@ -153,30 +153,61 @@ impl TranscriptCleanupResult {
     }
 }
 
+#[cfg(any(feature = "parakeet", test))]
 pub(crate) fn run_transcript_cleanup_pipeline(lines: Vec<String>) -> TranscriptCleanupResult {
+    run_transcript_cleanup_pipeline_with_flags(
+        lines,
+        crate::transcribe::DecodeFilterFlags::default(),
+    )
+}
+
+/// Version of the cleanup pipeline that honors per-transcription filter flags.
+/// A disabled stage passes the input through unchanged but still records a
+/// stat entry with `before == after` so the diagnostic counts stay consistent.
+pub(crate) fn run_transcript_cleanup_pipeline_with_flags(
+    lines: Vec<String>,
+    flags: crate::transcribe::DecodeFilterFlags,
+) -> TranscriptCleanupResult {
     let mut stats = Vec::new();
     let mut current = lines;
 
-    let stages: &[TranscriptCleanupStep] = &[
-        (TranscriptCleanupStage::DedupSegments, dedup_segments),
-        (TranscriptCleanupStage::DedupInterleaved, dedup_interleaved),
+    let stages: &[(TranscriptCleanupStep, bool)] = &[
         (
-            TranscriptCleanupStage::StripForeignScript,
-            strip_foreign_script,
+            (TranscriptCleanupStage::DedupSegments, dedup_segments),
+            flags.disable_dedup_segments,
         ),
         (
-            TranscriptCleanupStage::CollapseNoiseMarkers,
-            collapse_noise_markers,
+            (TranscriptCleanupStage::DedupInterleaved, dedup_interleaved),
+            flags.disable_dedup_interleaved,
         ),
         (
-            TranscriptCleanupStage::TrimTrailingNoise,
-            trim_trailing_noise,
+            (
+                TranscriptCleanupStage::StripForeignScript,
+                strip_foreign_script,
+            ),
+            flags.disable_strip_foreign_script,
+        ),
+        (
+            (
+                TranscriptCleanupStage::CollapseNoiseMarkers,
+                collapse_noise_markers,
+            ),
+            flags.disable_collapse_noise_markers,
+        ),
+        (
+            (
+                TranscriptCleanupStage::TrimTrailingNoise,
+                trim_trailing_noise,
+            ),
+            flags.disable_trim_trailing_noise,
         ),
     ];
 
-    for (stage, apply) in stages {
+    for ((stage, apply), disabled) in stages {
         let before = current.len();
-        current = apply(current);
+        if !*disabled {
+            current = apply(current);
+        }
         stats.push(TranscriptCleanupStageStat {
             stage: *stage,
             before,

@@ -416,6 +416,7 @@ pub fn rebuild_index_at(config: &Config, path: &Path) -> Result<GraphStats, Grap
             ContentType::Meeting => "meeting",
             ContentType::Memo => "memo",
             ContentType::Dictation => "dictation",
+            ContentType::Game => "game",
         };
         let date_str = frontmatter.date.to_rfc3339();
         let duration_secs = parse_duration_secs(&frontmatter.duration);

@@ -203,6 +203,7 @@ pub fn cross_meeting_research(
             crate::markdown::ContentType::Meeting => "meeting".to_string(),
             crate::markdown::ContentType::Memo => "memo".to_string(),
             crate::markdown::ContentType::Dictation => "dictation".to_string(),
+            crate::markdown::ContentType::Game => "game".to_string(),
         };
         if let Some(ref type_filter) = filters.content_type {
             if content_type != *type_filter {
@@ -488,6 +489,7 @@ pub fn consistency_report(
                             crate::markdown::ContentType::Meeting => "meeting".to_string(),
                             crate::markdown::ContentType::Memo => "memo".to_string(),
                             crate::markdown::ContentType::Dictation => "dictation".to_string(),
+                            crate::markdown::ContentType::Game => "game".to_string(),
                         },
                     });
 
@@ -602,6 +604,7 @@ pub fn person_profile(config: &Config, person: &str) -> Result<PersonProfile, Se
             crate::markdown::ContentType::Meeting => "meeting".to_string(),
             crate::markdown::ContentType::Memo => "memo".to_string(),
             crate::markdown::ContentType::Dictation => "dictation".to_string(),
+            crate::markdown::ContentType::Game => "game".to_string(),
         };
         let date = frontmatter.date.to_rfc3339();
 
@@ -788,6 +791,7 @@ fn process_intent_file(
         crate::markdown::ContentType::Meeting => "meeting".to_string(),
         crate::markdown::ContentType::Memo => "memo".to_string(),
         crate::markdown::ContentType::Dictation => "dictation".to_string(),
+        crate::markdown::ContentType::Game => "game".to_string(),
     };
 
     if let Some(ref type_filter) = filters.content_type {

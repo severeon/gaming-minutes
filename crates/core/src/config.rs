@@ -34,6 +34,7 @@ pub struct Config {
     pub hooks: HooksConfig,
     pub knowledge: KnowledgeConfig,
     pub palette: PaletteConfig,
+    pub games: GamesConfig,
 }
 
 /// Command palette configuration.
@@ -74,6 +75,71 @@ impl Default for PaletteConfig {
         Self {
             shortcut_enabled: true,
             shortcut: "CmdOrCtrl+Shift+K".into(),
+        }
+    }
+}
+
+/// Config for the tabletop RPG / game session capture mode. The `Game`
+/// content type uses a chaos-tuned decode profile (permissive filters, RPG
+/// lexicon boost) and an optional post-transcription banter-fold classifier
+/// that writes advisory `segment_spans` into the meeting frontmatter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GamesConfig {
+    /// Directory that holds per-campaign TOML files.
+    pub campaigns_dir: PathBuf,
+    /// Default RPG system (seeds the canonical lexicon when a campaign file
+    /// doesn't specify one, or when `--type game` is passed without a
+    /// campaign slug). Free-form string; "5e" / "pf2e" / "cocv7" are the
+    /// recognized presets — anything else falls back to a generic lexicon.
+    pub default_system: String,
+    /// Banter-fold classifier configuration.
+    pub classifier: GamesClassifierConfig,
+}
+
+impl Default for GamesConfig {
+    fn default() -> Self {
+        Self {
+            campaigns_dir: minutes_dir().join("campaigns"),
+            default_system: "5e".into(),
+            classifier: GamesClassifierConfig::default(),
+        }
+    }
+}
+
+/// Banter-fold classifier configuration. When enabled, Game-type transcripts
+/// are post-processed by shelling out to `agent_binary` (default: `claude`)
+/// with a strict JSON schema that classifies every transcript line as
+/// in-game / banter / mechanics / side-conversation / break / unknown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GamesClassifierConfig {
+    /// Whether to run the classifier for Game-type content. Defaults to true
+    /// when the pipeline sees Game content; switch off to keep the full
+    /// transcript flat.
+    pub enabled: bool,
+    /// Binary name or absolute path of the agent used for classification.
+    /// Default: `"claude"` (Claude Code CLI). Anything that understands
+    /// `-p <prompt> --output-format json --json-schema <schema>
+    /// --max-turns 1 --max-budget-usd <cap>` works.
+    pub agent_binary: String,
+    /// Per-session hard cap passed through as `--max-budget-usd`. A 4-hour
+    /// RPG session (~30k words) rarely exceeds $0.50 at current rates; $2
+    /// leaves headroom for retries and long sessions without being
+    /// surprising.
+    pub max_budget_usd: f64,
+    /// Timeout (seconds) for the classifier subprocess. On timeout we skip
+    /// classification — transcript is still written, just without spans.
+    pub agent_timeout_secs: u64,
+}
+
+impl Default for GamesClassifierConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            agent_binary: "claude".into(),
+            max_budget_usd: 2.0,
+            agent_timeout_secs: 300,
         }
     }
 }
@@ -674,6 +740,7 @@ impl Default for Config {
             hooks: HooksConfig::default(),
             knowledge: KnowledgeConfig::default(),
             palette: PaletteConfig::default(),
+            games: GamesConfig::default(),
         }
     }
 }

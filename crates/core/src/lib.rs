@@ -8,6 +8,7 @@ pub mod device_monitor;
 pub mod diarize;
 pub mod error;
 pub mod events;
+pub mod games;
 pub mod graph;
 pub mod health;
 pub mod jobs;

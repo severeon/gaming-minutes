@@ -1,11 +1,15 @@
 use crate::config::Config;
 use crate::error::TranscribeError;
+#[cfg(any(feature = "parakeet", test))]
+use crate::transcription_coordinator::run_transcript_cleanup_pipeline;
 #[cfg(test)]
 use crate::transcription_coordinator::{
     collapse_noise_markers, dedup_interleaved, dedup_segments, strip_foreign_script,
     trim_trailing_noise,
 };
-use crate::transcription_coordinator::{run_transcript_cleanup_pipeline, TranscriptCleanupStage};
+use crate::transcription_coordinator::{
+    run_transcript_cleanup_pipeline_with_flags, TranscriptCleanupStage,
+};
 #[cfg(feature = "parakeet")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "parakeet")]
@@ -125,15 +129,67 @@ pub struct TranscribeResult {
     pub stats: FilterStats,
 }
 
+/// Default `no_speech_prob` threshold above which whisper segments are
+/// treated as silence / hallucination and skipped. Matches the historical
+/// pipeline value; the game profile overrides this upward to be more
+/// permissive (whispered roleplay should survive).
+pub const DEFAULT_NO_SPEECH_PROB_THRESHOLD: f32 = 0.8;
+
+/// Chaos-profile filter flags for `DecodeHints`. Each flag independently
+/// disables one of the post-transcription cleanup layers or loosens a
+/// confidence threshold. Default is all-false = all filters enabled.
+///
+/// Game-type content (`ContentType::Game`) sets these aggressively because
+/// fantasy proper nouns look like foreign script, dice-roll patter looks like
+/// interleaved dedup fodder, and whispered roleplay looks like silence to the
+/// no-speech detector. Filters tuned for corporate meetings destroy it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct DecodeFilterFlags {
+    /// Disable the foreign-script hallucination filter. Fantasy proper nouns
+    /// ("Morwenna", "Nyxralath") often share character classes with non-Latin
+    /// scripts and get stripped.
+    pub disable_strip_foreign_script: bool,
+    /// Disable the language-agnostic noise-marker collapse ("[laughter]",
+    /// "[growls]"). In-character sounds are content for RPG transcripts.
+    pub disable_collapse_noise_markers: bool,
+    /// Disable the interleaved-dedup filter (A/B/A/B pattern collapse).
+    /// Repeated dice-roll patter is intentional and should survive.
+    pub disable_dedup_interleaved: bool,
+    /// Disable the consecutive-segment dedup filter. Not currently exposed in
+    /// the game profile — reserved for future use.
+    pub disable_dedup_segments: bool,
+    /// Disable the trailing-noise trim filter. Reserved for future use.
+    pub disable_trim_trailing_noise: bool,
+    /// Override the whisper no_speech_prob skip threshold. Default pipeline
+    /// uses 0.8; the game profile uses 0.95 so whispered roleplay survives.
+    /// `None` = use the default.
+    pub no_speech_prob_threshold: Option<f32>,
+}
+
+impl DecodeFilterFlags {
+    /// Chaos-tuned profile for tabletop RPG / game session capture.
+    pub fn for_game() -> Self {
+        Self {
+            disable_strip_foreign_script: true,
+            disable_collapse_noise_markers: true,
+            disable_dedup_interleaved: true,
+            disable_dedup_segments: false,
+            disable_trim_trailing_noise: false,
+            no_speech_prob_threshold: Some(0.95),
+        }
+    }
+}
+
 /// Meeting-local lexical hints that can safely inform batch decoding.
 ///
 /// These are intentionally narrower than the global graph-derived phrase set:
 /// the goal is to bias decoding toward names and terms that are plausible in
 /// this specific recording, without dragging in the user's full history.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct DecodeHints {
     priority_phrases: Vec<String>,
     contextual_phrases: Vec<String>,
+    filter_flags: DecodeFilterFlags,
 }
 
 impl DecodeHints {
@@ -169,7 +225,37 @@ impl DecodeHints {
         Self {
             priority_phrases,
             contextual_phrases,
+            filter_flags: DecodeFilterFlags::default(),
         }
+    }
+
+    /// Chaos-tuned decode hints for tabletop RPG / game session capture.
+    ///
+    /// Seeds the phrase list with a canonical RPG lexicon (derived from the
+    /// campaign `system`, defaulting to `"5e"` when no campaign is provided)
+    /// plus any campaign-specific vocabulary (party, NPCs, places, extras).
+    /// Sets filter flags to the chaos profile so fantasy names and
+    /// in-character sounds survive the post-transcription cleanup pipeline.
+    pub fn for_game(campaign: Option<&crate::games::GameCampaign>) -> Self {
+        let system = campaign
+            .map(|c| c.system.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("5e");
+        let mut priority: Vec<String> = Vec::new();
+        let mut contextual: Vec<String> = crate::games::lexicon_for_system(system);
+
+        if let Some(campaign) = campaign {
+            for name in campaign.priority_names() {
+                priority.push(name);
+            }
+            for name in campaign.contextual_terms() {
+                contextual.push(name);
+            }
+        }
+
+        let mut hints = Self::from_candidates(&priority, &contextual);
+        hints.filter_flags = DecodeFilterFlags::for_game();
+        hints
     }
 
     pub fn is_empty(&self) -> bool {
@@ -183,7 +269,29 @@ impl DecodeHints {
         let mut merged_contextual = self.contextual_phrases.clone();
         merged_contextual.extend(contextual.iter().cloned());
 
-        Self::from_candidates(&merged_priority, &merged_contextual)
+        let mut hints = Self::from_candidates(&merged_priority, &merged_contextual);
+        hints.filter_flags = self.filter_flags;
+        hints
+    }
+
+    /// Filter flags that govern which cleanup layers run for this transcription.
+    pub fn filter_flags(&self) -> DecodeFilterFlags {
+        self.filter_flags
+    }
+
+    /// Override the filter flags. Intended for tests and for callers that
+    /// build hints manually outside the standard constructors.
+    pub fn set_filter_flags(&mut self, flags: DecodeFilterFlags) {
+        self.filter_flags = flags;
+    }
+
+    /// Whisper no_speech_prob skip threshold to apply for this transcription.
+    /// Default is `0.8` (matches the historical pipeline behavior); the game
+    /// profile raises it to `0.95` so whispered roleplay survives.
+    pub fn no_speech_prob_threshold(&self) -> f32 {
+        self.filter_flags
+            .no_speech_prob_threshold
+            .unwrap_or(DEFAULT_NO_SPEECH_PROB_THRESHOLD)
     }
 
     pub(crate) fn debug_priority_phrases(&self) -> Vec<String> {
@@ -759,7 +867,7 @@ fn transcribe_chunk_ranges(
         return Ok(None);
     }
 
-    let cleanup = run_transcript_cleanup_pipeline(all_lines);
+    let cleanup = run_transcript_cleanup_pipeline_with_flags(all_lines, hints.filter_flags());
     aggregate.after_dedup = cleanup.after(TranscriptCleanupStage::DedupSegments);
     aggregate.after_interleaved = cleanup.after(TranscriptCleanupStage::DedupInterleaved);
     aggregate.after_script_filter = cleanup.after(TranscriptCleanupStage::StripForeignScript);
@@ -1337,6 +1445,7 @@ fn transcribe_with_whisper(
     let mut lines: Vec<String> = Vec::new();
     let mut rescued_lines: Vec<String> = Vec::new();
     let mut skipped_no_speech = 0u32;
+    let no_speech_threshold = hints.no_speech_prob_threshold();
     for i in 0..num_segments {
         let segment = match state.get_segment(i) {
             Some(seg) => seg,
@@ -1357,13 +1466,16 @@ fn transcribe_with_whisper(
         let secs = (start_ts % 6000) / 100;
         let line = format!("[{}:{:02}] {}", mins, secs, text);
 
-        // Layer 3: Skip segments with high no_speech probability (likely hallucination)
+        // Layer 3: Skip segments with high no_speech probability (likely hallucination).
+        // The threshold is hint-configurable so the Game profile can use 0.95
+        // (keep whispers, murmurs, in-character quiet speech).
         let no_speech_prob = segment.no_speech_probability();
-        if no_speech_prob > 0.8 {
+        if no_speech_prob > no_speech_threshold {
             skipped_no_speech += 1;
             tracing::debug!(
                 segment = i,
                 no_speech_prob = format!("{:.2}", no_speech_prob),
+                threshold = format!("{:.2}", no_speech_threshold),
                 "flagged segment — high no_speech probability"
             );
             rescued_lines.push(line);
@@ -1402,7 +1514,7 @@ fn transcribe_with_whisper(
         );
     }
 
-    let cleanup = run_transcript_cleanup_pipeline(lines);
+    let cleanup = run_transcript_cleanup_pipeline_with_flags(lines, hints.filter_flags());
     stats.after_dedup = cleanup.after(TranscriptCleanupStage::DedupSegments);
     stats.after_interleaved = cleanup.after(TranscriptCleanupStage::DedupInterleaved);
     stats.after_script_filter = cleanup.after(TranscriptCleanupStage::StripForeignScript);
@@ -2162,6 +2274,7 @@ fn transcribe_with_parakeet(
                     result.first_request_on_process,
                     result.elapsed_ms,
                     config,
+                    hints,
                 );
             }
             Err(error) => {
@@ -2326,6 +2439,7 @@ fn transcribe_with_parakeet(
         host_process_first_use,
         elapsed_ms,
         config,
+        hints,
     )
 }
 
@@ -2372,28 +2486,52 @@ fn transcribe_result_from_parakeet_parsed(
     host_process_first_use: bool,
     elapsed_ms: u64,
     config: &Config,
+    hints: &DecodeHints,
 ) -> Result<TranscribeResult, TranscribeError> {
-    let transcript = parsed.transcript.clone();
-    let pstats = {
-        let raw_segments = parsed.segments.len();
-        let lines: Vec<String> = parsed
-            .segments
-            .iter()
-            .map(|segment| {
-                let mins = (segment.start_secs / 60.0) as u64;
-                let secs = (segment.start_secs % 60.0) as u64;
-                format!("[{}:{:02}] {}", mins, secs, segment.text)
-            })
-            .collect();
-        let cleanup = run_transcript_cleanup_pipeline(lines);
-        ParakeetFilterStats {
-            raw_segments,
-            after_dedup: cleanup.after(TranscriptCleanupStage::DedupSegments),
-            after_interleaved: cleanup.after(TranscriptCleanupStage::DedupInterleaved),
-            after_script_filter: cleanup.after(TranscriptCleanupStage::StripForeignScript),
-            after_noise_markers: cleanup.after(TranscriptCleanupStage::CollapseNoiseMarkers),
-            after_trailing_trim: cleanup.after(TranscriptCleanupStage::TrimTrailingNoise),
+    // Re-run the cleanup pipeline with caller-supplied filter flags so that
+    // Game-type content (which disables `strip_foreign_script` / dedup /
+    // noise-marker collapse) recovers any content the default-flag pass at
+    // parse time may have clobbered. `parsed.transcript` was produced under
+    // default flags; rebuild from `parsed.segments` to honor the hints.
+    let flags = hints.filter_flags();
+    let default_flags = crate::transcribe::DecodeFilterFlags::default();
+    let raw_segments = parsed.segments.len();
+    let initial_lines: Vec<String> = parsed
+        .segments
+        .iter()
+        .map(|segment| {
+            let mins = (segment.start_secs / 60.0) as u64;
+            let secs = (segment.start_secs % 60.0) as u64;
+            format!("[{}:{:02}] {}", mins, secs, segment.text)
+        })
+        .collect();
+    let cleanup = run_transcript_cleanup_pipeline_with_flags(initial_lines, flags);
+    let transcript = if cleanup.lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", cleanup.lines.join("\n"))
+    };
+    let transcript = if flags == default_flags {
+        // Preserve byte-for-byte equivalence with the pre-flag behavior when
+        // no custom flags are in play — the sidecar pipeline can produce a
+        // transcript that differs from re-assembling per-segment lines due
+        // to word-grouping heuristics upstream. Trust `parsed.transcript` in
+        // that case.
+        if parsed.transcript.is_empty() {
+            transcript
+        } else {
+            parsed.transcript.clone()
         }
+    } else {
+        transcript
+    };
+    let pstats = ParakeetFilterStats {
+        raw_segments,
+        after_dedup: cleanup.after(TranscriptCleanupStage::DedupSegments),
+        after_interleaved: cleanup.after(TranscriptCleanupStage::DedupInterleaved),
+        after_script_filter: cleanup.after(TranscriptCleanupStage::StripForeignScript),
+        after_noise_markers: cleanup.after(TranscriptCleanupStage::CollapseNoiseMarkers),
+        after_trailing_trim: cleanup.after(TranscriptCleanupStage::TrimTrailingNoise),
     };
 
     stats.raw_segments = pstats.raw_segments;
@@ -3067,6 +3205,7 @@ pub fn transcribe_parakeet_batch(
                 host_process_first_use,
                 elapsed_ms,
                 config,
+                &DecodeHints::default(),
             ),
         })
         .collect())
@@ -4050,6 +4189,61 @@ Hello there.
                 "Well Factory".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn decode_filter_flags_for_game_disables_expected_filters() {
+        let flags = DecodeFilterFlags::for_game();
+        assert!(flags.disable_strip_foreign_script);
+        assert!(flags.disable_collapse_noise_markers);
+        assert!(flags.disable_dedup_interleaved);
+        assert!(!flags.disable_dedup_segments);
+        assert!(!flags.disable_trim_trailing_noise);
+        assert_eq!(flags.no_speech_prob_threshold, Some(0.95));
+    }
+
+    #[test]
+    fn decode_hints_for_game_without_campaign_uses_5e_lexicon() {
+        let hints = DecodeHints::for_game(None);
+        assert_eq!(hints.no_speech_prob_threshold(), 0.95);
+        assert!(hints.filter_flags().disable_strip_foreign_script);
+        assert!(hints.filter_flags().disable_collapse_noise_markers);
+        // The prompt should include D&D 5e lexicon terms (from the generic
+        // contextual-phrases slot). Assert on a term that's alphabetically
+        // near the top of the sorted lexicon.
+        let prompt = hints.whisper_initial_prompt().unwrap();
+        let prompt_lc = prompt.to_lowercase();
+        assert!(
+            prompt_lc.contains("acrobatics")
+                || prompt_lc.contains("arcana")
+                || prompt_lc.contains("athletics"),
+            "expected 5e lexicon terms in prompt, got: {}",
+            prompt
+        );
+    }
+
+    #[test]
+    fn decode_hints_for_game_with_campaign_promotes_party_names() {
+        let campaign = crate::games::GameCampaign {
+            name: "Test".into(),
+            system: "5e".into(),
+            party: vec!["Thoren Ironfist".into(), "Elara Moonwhisper".into()],
+            npcs: vec!["Queen Morwenna".into()],
+            places: vec!["Ashfall".into()],
+            mechanics_extra: vec![],
+        };
+        let hints = DecodeHints::for_game(Some(&campaign));
+        let priority = hints.debug_priority_phrases();
+        assert!(priority.contains(&"Thoren Ironfist".to_string()));
+        assert!(priority.contains(&"Elara Moonwhisper".to_string()));
+        assert!(priority.contains(&"Queen Morwenna".to_string()));
+    }
+
+    #[test]
+    fn default_decode_hints_use_legacy_no_speech_threshold() {
+        let hints = DecodeHints::default();
+        assert_eq!(hints.no_speech_prob_threshold(), 0.8);
+        assert!(!hints.filter_flags().disable_strip_foreign_script);
     }
 
     #[test]

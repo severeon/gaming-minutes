@@ -725,6 +725,205 @@ pub fn process(
     process_with_sidecar(audio_path, content_type, title, config, None, |_| {})
 }
 
+/// Process a tabletop RPG / game session recording through a specialised
+/// pipeline. Unlike `process()`, this:
+///
+/// - Loads the optional campaign (`~/.minutes/campaigns/<slug>.toml`) to seed
+///   the chaos-tuned `DecodeHints::for_game` lexicon.
+/// - Disables the aggressive anti-hallucination filters that eat fantasy
+///   proper nouns and in-character sounds.
+/// - Writes the resulting markdown to `<output_dir>/games/`.
+/// - After transcription, invokes the optional banter-fold classifier; spans
+///   written into the frontmatter's `segment_spans` field render as
+///   collapsible `<details>` blocks (via `fold_non_game_spans`) while
+///   preserving the full verbatim transcript inline.
+///
+/// The classifier is best-effort: missing binary, timeout, or repeated
+/// validation failure fall back to a span-less transcript rather than
+/// erroring.
+pub fn process_game(
+    audio_path: &Path,
+    title: Option<&str>,
+    campaign_slug: Option<&str>,
+    config: &Config,
+) -> Result<WriteResult, MinutesError> {
+    process_game_inner(audio_path, title, campaign_slug, config, |_| {})
+}
+
+fn process_game_inner<F>(
+    audio_path: &Path,
+    title: Option<&str>,
+    campaign_slug: Option<&str>,
+    config: &Config,
+    mut on_progress: F,
+) -> Result<WriteResult, MinutesError>
+where
+    F: FnMut(PipelineStage),
+{
+    let metadata = std::fs::metadata(audio_path)?;
+    if metadata.len() == 0 {
+        return Err(crate::error::TranscribeError::EmptyAudio.into());
+    }
+
+    // Allowed-directory guard (same policy as the generic pipeline).
+    if let Ok(canonical) = audio_path.canonicalize() {
+        let allowed = &config.security.allowed_audio_dirs;
+        if !allowed.is_empty() {
+            let in_allowed = allowed.iter().any(|dir| {
+                dir.canonicalize()
+                    .map(|d| canonical.starts_with(&d))
+                    .unwrap_or(false)
+            });
+            if !in_allowed {
+                return Err(crate::error::TranscribeError::UnsupportedFormat(format!(
+                    "file not in allowed directories: {}",
+                    audio_path.display()
+                ))
+                .into());
+            }
+        }
+    }
+
+    let campaign = match campaign_slug {
+        Some(slug) => match crate::games::load_campaign(config, slug) {
+            Ok(Some(c)) => Some(c),
+            Ok(None) => {
+                tracing::warn!(
+                    slug = slug,
+                    "campaign file not found — using system default"
+                );
+                None
+            }
+            Err(e) => {
+                tracing::warn!(slug = slug, error = %e, "failed to load campaign — using system default");
+                None
+            }
+        },
+        None => None,
+    };
+
+    // Step 1: Transcribe with game decode hints.
+    on_progress(PipelineStage::Transcribing);
+    let decode_hints = crate::transcribe::DecodeHints::for_game(campaign.as_ref());
+    let step_start = std::time::Instant::now();
+    let result =
+        crate::transcribe::transcribe_meeting_with_hints(audio_path, config, &decode_hints)?;
+    let transcribe_ms = step_start.elapsed().as_millis() as u64;
+    let transcript = result.text;
+    let filter_stats = result.stats;
+
+    let word_count = transcript.split_whitespace().count();
+    tracing::info!(
+        step = "transcribe",
+        words = word_count,
+        content_type = "game",
+        diagnosis = filter_stats.diagnosis(),
+        "game transcription complete"
+    );
+
+    let status = if word_count < config.transcription.min_words {
+        Some(OutputStatus::NoSpeech)
+    } else {
+        Some(OutputStatus::TranscriptOnly)
+    };
+
+    // Step 2: Banter-fold classifier (best-effort).
+    let segment_spans = if status == Some(OutputStatus::NoSpeech) {
+        Vec::new()
+    } else if config.games.classifier.enabled {
+        match crate::games::classify_transcript(config, &transcript) {
+            crate::games::ClassifierOutcome::Ok(spans) => {
+                tracing::info!(spans = spans.len(), "banter-fold classifier ok");
+                spans
+            }
+            crate::games::ClassifierOutcome::Skipped(reason) => {
+                tracing::warn!(reason = %reason, "banter-fold classifier skipped");
+                Vec::new()
+            }
+            crate::games::ClassifierOutcome::Rejected(reason) => {
+                tracing::warn!(reason = %reason, "banter-fold classifier output rejected");
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Step 3: Build frontmatter and write markdown.
+    let recording_date = infer_recording_date(None, None, &metadata);
+    let auto_title = title
+        .map(|t| t.to_string())
+        .unwrap_or_else(|| generate_title(&transcript, None));
+
+    let tags = {
+        let mut tags: Vec<String> = vec!["game".into()];
+        if let Some(slug) = campaign_slug {
+            tags.push(format!("campaign/{}", slug));
+        }
+        if let Some(campaign) = campaign.as_ref() {
+            if !campaign.system.is_empty() {
+                tags.push(format!("system/{}", campaign.system));
+            }
+        }
+        tags
+    };
+
+    let frontmatter = Frontmatter {
+        title: auto_title,
+        r#type: ContentType::Game,
+        date: recording_date,
+        duration: estimate_duration(audio_path),
+        source: Some("games".into()),
+        status,
+        tags,
+        attendees: campaign
+            .as_ref()
+            .map(|c| c.party.clone())
+            .unwrap_or_default(),
+        attendees_raw: None,
+        calendar_event: None,
+        people: campaign
+            .as_ref()
+            .map(|c| c.party.clone())
+            .unwrap_or_default(),
+        entities: Default::default(),
+        device: None,
+        captured_at: None,
+        context: campaign.as_ref().map(|c| c.name.clone()),
+        action_items: vec![],
+        decisions: vec![],
+        intents: vec![],
+        recorded_by: config.identity.name.clone(),
+        visibility: None,
+        speaker_map: vec![],
+        segment_spans,
+        filter_diagnosis: if status == Some(OutputStatus::NoSpeech) {
+            Some(filter_stats.diagnosis())
+        } else {
+            None
+        },
+    };
+
+    on_progress(PipelineStage::Saving);
+    let write_result = markdown::write_with_retry_path(
+        &frontmatter,
+        &transcript,
+        None,
+        None,
+        Some(audio_path),
+        config,
+    )?;
+
+    tracing::info!(
+        path = %write_result.path.display(),
+        words = word_count,
+        transcribe_ms,
+        "game session written"
+    );
+
+    Ok(write_result)
+}
+
 /// Process an audio file with optional sidecar metadata (from iPhone, etc.).
 pub fn process_with_sidecar<F>(
     audio_path: &Path,
@@ -931,6 +1130,7 @@ pub fn write_transcript_artifact(
             ContentType::Memo => Some("voice-memos".into()),
             ContentType::Meeting => None,
             ContentType::Dictation => Some("dictation".into()),
+            ContentType::Game => Some("games".into()),
         }
     };
     let tags = derive_structured_tags(
@@ -973,6 +1173,7 @@ pub fn write_transcript_artifact(
         recorded_by: config.identity.name.clone(),
         visibility: None,
         speaker_map: vec![],
+        segment_spans: vec![],
         filter_diagnosis: if status == Some(OutputStatus::NoSpeech) {
             Some(filter_stats.diagnosis())
         } else {
@@ -1752,6 +1953,7 @@ where
             ContentType::Memo => Some("voice-memos".into()),
             ContentType::Meeting => None,
             ContentType::Dictation => Some("dictation".into()),
+            ContentType::Game => Some("games".into()),
         }
     };
     let tags = derive_structured_tags(
@@ -1785,6 +1987,7 @@ where
         recorded_by: config.identity.name.clone(),
         visibility: None,
         speaker_map,
+        segment_spans: vec![],
         filter_diagnosis: if status == Some(OutputStatus::NoSpeech) {
             Some(filter_stats.diagnosis())
         } else {
@@ -3724,6 +3927,7 @@ mod tests {
             recorded_by: Some("Mat".into()),
             visibility: None,
             speaker_map: vec![],
+            segment_spans: vec![],
             filter_diagnosis: None,
         };
 
@@ -4940,6 +5144,7 @@ mod tests {
                 confidence: diarize::Confidence::Medium,
                 source: diarize::AttributionSource::Llm,
             }],
+            segment_spans: vec![],
             filter_diagnosis: None,
         };
 

@@ -412,6 +412,281 @@ fn parakeet_chunk_ranges(
     Some(fixed_length_chunks(total_samples, 16000 * chunk_secs))
 }
 
+/// Overlapping chunk ranges: consecutive chunks share `overlap_sec` seconds
+/// of audio. Chunk N ends at `start_N + chunk_len_sec` samples; chunk N+1
+/// starts at `(start_N + chunk_len_sec) - overlap_sec` samples, so the
+/// region `[chunk_N.end - overlap_sec, chunk_N.end]` appears in both.
+///
+/// - `chunk_len_sec` must be `> overlap_sec` — if callers pass an invalid
+///   combination, this function falls back to non-overlapping ranges.
+/// - `overlap_sec == 0` degenerates to [`fixed_length_chunks`].
+/// - Empty audio produces an empty vec.
+///
+/// Example with `total_samples = 30s * 16kHz`, `chunk_len_sec = 20`,
+/// `overlap_sec = 10`:
+///   chunk 0: [0,       20s]
+///   chunk 1: [10s, 30s]
+///
+/// Not gated on `feature = "parakeet"` — only the *caller* is parakeet-only,
+/// and leaving the helper visible under `cfg(test)` lets the merge crate
+/// test ranges directly.
+#[cfg(feature = "parakeet")]
+fn overlapping_chunk_ranges(
+    total_samples: usize,
+    chunk_len_sec: usize,
+    overlap_sec: usize,
+) -> Vec<(usize, usize)> {
+    if total_samples == 0 || chunk_len_sec == 0 {
+        return Vec::new();
+    }
+    let chunk_len_samples = 16_000 * chunk_len_sec;
+    if overlap_sec == 0 || overlap_sec >= chunk_len_sec {
+        // Degenerate: fall back to non-overlapping behavior. A caller that
+        // misconfigures overlap (>= chunk length) would otherwise infinite
+        // loop; emit the non-overlapping shape to stay safe.
+        return fixed_length_chunks(total_samples, chunk_len_samples);
+    }
+    let overlap_samples = 16_000 * overlap_sec;
+    let stride = chunk_len_samples - overlap_samples;
+
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    loop {
+        let end = (start + chunk_len_samples).min(total_samples);
+        chunks.push((start, end));
+        if end >= total_samples {
+            break;
+        }
+        start += stride;
+        // Defensive: if stride would place us at/past the end after an
+        // earlier iteration, stop. Guarded by the `end >= total_samples`
+        // check above, but this second condition guards against the
+        // pathological case where chunk_len_samples > total_samples and
+        // we'd re-emit the same range.
+        if start >= total_samples {
+            break;
+        }
+    }
+    chunks
+}
+
+/// Helper for the overlap+merge pass: given the overlapping chunk ranges,
+/// compute the sample-range windows that each seam's "tail" (chunk N end)
+/// and "head" (chunk N+1 start) occupy. The returned tuples are
+/// `(tail_start, tail_end, head_start, head_end)` all in *sample indices
+/// within the chunks themselves* — NOT the full audio — so callers can
+/// slice chunk-local transcript data.
+///
+/// Returns a vector with `chunks.len() - 1` entries (one per seam). For a
+/// 1-chunk input, returns an empty vector.
+#[cfg(feature = "parakeet")]
+fn overlap_seam_windows(chunks: &[(usize, usize)], overlap_samples: usize) -> Vec<OverlapSeam> {
+    let mut seams = Vec::new();
+    for i in 0..chunks.len().saturating_sub(1) {
+        let (_, n_end) = chunks[i];
+        let (n1_start, _) = chunks[i + 1];
+        // The tail of chunk N covers the last `overlap_samples` of it; the
+        // head of chunk N+1 covers the first `overlap_samples`.
+        // In the original-audio coordinate system, both correspond to the
+        // same sample range [n_end - overlap, n_end].
+        let overlap_start = n_end.saturating_sub(overlap_samples);
+        let overlap_end = n_end.max(n1_start + overlap_samples).min(n_end);
+        seams.push(OverlapSeam {
+            chunk_n_index: i as u32,
+            overlap_start_sec: overlap_start as f64 / 16_000.0,
+            overlap_end_sec: overlap_end as f64 / 16_000.0,
+        });
+    }
+    seams
+}
+
+/// Coordinates of a single seam (between chunks N and N+1) in global
+/// (original audio) seconds. Used to slice transcript text for merge input.
+#[cfg(feature = "parakeet")]
+#[derive(Debug, Clone)]
+struct OverlapSeam {
+    chunk_n_index: u32,
+    overlap_start_sec: f64,
+    overlap_end_sec: f64,
+}
+
+/// Returns true iff any adjacent pair of chunk ranges shares at least one
+/// sample — i.e., this is an overlapping-chunks layout rather than the
+/// legacy non-overlapping one. Used to decide whether to run the pairwise
+/// merge pass.
+#[cfg(feature = "parakeet")]
+fn ranges_overlap(chunks: &[(usize, usize)]) -> bool {
+    chunks.windows(2).any(|pair| pair[0].1 > pair[1].0)
+}
+
+/// Assemble the final per-chunk lines into a single line vector, running
+/// the tiered pairwise merge on each seam.
+///
+/// For chunk N, we split its lines into:
+/// - pre_overlap: lines with `t < seam.overlap_start_sec`.
+/// - overlap_tail: lines with `seam.overlap_start_sec <= t < seam.overlap_end_sec`.
+///
+/// For chunk N+1, we split its lines into:
+/// - overlap_head: lines with `seam.overlap_start_sec <= t < seam.overlap_end_sec`.
+/// - post_overlap: lines with `t >= seam.overlap_end_sec`.
+///
+/// The merged text replaces both tail + head. The final output is:
+/// ```text
+///   chunk_0.pre_overlap
+///   + merge(chunk_0.tail, chunk_1.head)
+///   + chunk_1.pre_overlap_for_next_seam (= chunk_1 core)
+///   + merge(chunk_1.tail, chunk_2.head)
+///   ...
+///   + chunk_last.post_overlap
+/// ```
+///
+/// Emits `TranscribeSeamResolved` once per seam.
+#[cfg(feature = "parakeet")]
+fn assemble_with_merge(
+    audio_path: &Path,
+    per_chunk_lines: &[Vec<String>],
+    seams: &[OverlapSeam],
+    config: &Config,
+) -> Vec<String> {
+    use crate::events::{append_event, MinutesEvent};
+    use crate::merge::merge_overlap;
+
+    if per_chunk_lines.is_empty() {
+        return Vec::new();
+    }
+    if seams.is_empty() || per_chunk_lines.len() == 1 {
+        // Single chunk — no merge needed.
+        return per_chunk_lines.iter().flatten().cloned().collect();
+    }
+
+    let mut out: Vec<String> = Vec::new();
+
+    for (chunk_idx, lines) in per_chunk_lines.iter().enumerate() {
+        // Determine the "overlap with next" window (if any seam starts at
+        // this chunk) and the "overlap with prev" window (if any seam ends
+        // at this chunk).
+        let overlap_with_next = seams.iter().find(|s| s.chunk_n_index as usize == chunk_idx);
+        let overlap_with_prev = if chunk_idx > 0 {
+            seams
+                .iter()
+                .find(|s| s.chunk_n_index as usize == chunk_idx - 1)
+        } else {
+            None
+        };
+
+        // Split this chunk's lines by timestamp into three buckets:
+        //   [0, overlap_with_prev.end) = leading overlap (head, already merged below)
+        //   [overlap_with_prev.end, overlap_with_next.start) = core body
+        //   [overlap_with_next.start, ..) = trailing overlap (tail)
+        let prev_end = overlap_with_prev.map(|s| s.overlap_end_sec);
+        let next_start = overlap_with_next.map(|s| s.overlap_start_sec);
+
+        let mut core_body: Vec<String> = Vec::new();
+        for line in lines {
+            let ts = parse_line_timestamp_secs(line).unwrap_or(0.0);
+            let after_prev = prev_end.is_none_or(|t| ts >= t);
+            let before_next = next_start.is_none_or(|t| ts < t);
+            if after_prev && before_next {
+                core_body.push(line.clone());
+            }
+        }
+
+        out.extend(core_body);
+
+        // If there's a seam between this chunk and the next, run the merge
+        // and append the merged overlap region.
+        if let Some(seam) = overlap_with_next {
+            let tail_lines: Vec<&str> = lines
+                .iter()
+                .filter(|line| {
+                    let ts = parse_line_timestamp_secs(line).unwrap_or(0.0);
+                    ts >= seam.overlap_start_sec && ts < seam.overlap_end_sec
+                })
+                .map(|s| s.as_str())
+                .collect();
+            let next_chunk_lines = per_chunk_lines
+                .get(chunk_idx + 1)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let head_lines: Vec<&str> = next_chunk_lines
+                .iter()
+                .filter(|line| {
+                    let ts = parse_line_timestamp_secs(line).unwrap_or(0.0);
+                    ts >= seam.overlap_start_sec && ts < seam.overlap_end_sec
+                })
+                .map(|s| s.as_str())
+                .collect();
+
+            let tail_text = strip_timestamps(&tail_lines);
+            let head_text = strip_timestamps(&head_lines);
+
+            let merge_result = merge_overlap(&tail_text, &head_text, config);
+
+            // Emit seam event before appending so subscribers see progress
+            // ordered with the assembly flow.
+            append_event(MinutesEvent::TranscribeSeamResolved {
+                audio_path: audio_path.to_string_lossy().to_string(),
+                chunk_index: seam.chunk_n_index,
+                tier: merge_result.tier.as_str().to_string(),
+                agent_invocations: merge_result.agent_invocations,
+            });
+
+            // Format the merged overlap as a single timestamped line anchored
+            // at the seam start. The downstream cleanup pipeline still runs
+            // its dedup/noise filters over this.
+            if !merge_result.merged_text.trim().is_empty() {
+                let mins = (seam.overlap_start_sec / 60.0).floor() as u64;
+                let secs = (seam.overlap_start_sec % 60.0).floor() as u64;
+                out.push(format!(
+                    "[{}:{:02}] {}",
+                    mins,
+                    secs,
+                    merge_result.merged_text.trim()
+                ));
+            }
+        }
+    }
+
+    out
+}
+
+/// Parse the `[M:SS]` prefix of a transcript line and return the total
+/// seconds. Returns `None` if the line doesn't start with a timestamp
+/// marker — callers treat that as `0.0`, which is safe since un-timestamped
+/// lines are rare and will just sort to the front.
+#[cfg(feature = "parakeet")]
+fn parse_line_timestamp_secs(line: &str) -> Option<f64> {
+    let rest = line.trim_start().strip_prefix('[')?;
+    let close = rest.find(']')?;
+    let ts = &rest[..close];
+    let (mins, secs) = ts.split_once(':')?;
+    let m = mins.parse::<u64>().ok()?;
+    let s = secs.parse::<u64>().ok()?;
+    Some(m as f64 * 60.0 + s as f64)
+}
+
+/// Strip the `[M:SS] ` prefix from a set of timestamped lines and join
+/// their text with spaces. Used to produce the input to the merge module.
+#[cfg(feature = "parakeet")]
+fn strip_timestamps(lines: &[&str]) -> String {
+    let mut out = String::new();
+    for line in lines {
+        let line = line.trim();
+        let without_ts = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.find(']').map(|i| &rest[i + 1..]))
+            .unwrap_or(line)
+            .trim();
+        if !without_ts.is_empty() {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(without_ts);
+        }
+    }
+    out
+}
+
 fn transcribe_chunk_ranges(
     audio_path: &Path,
     samples: &[f32],
@@ -623,11 +898,15 @@ fn transcribe_chunk_ranges_parakeet_pool(
         indexed[i] = Some(success);
     }
 
-    let mut all_lines = Vec::new();
     let mut aggregate = FilterStats {
         audio_duration_secs,
         ..Default::default()
     };
+
+    // Per-chunk timestamped lines (global seconds). The overlap-aware merge
+    // pass below slices these by timestamp to isolate the seam regions.
+    let mut per_chunk_lines: Vec<Vec<String>> =
+        (0..chunk_ranges.len()).map(|_| Vec::new()).collect();
 
     for (chunk_index, slot) in indexed.into_iter().enumerate() {
         let Some(success) = slot else { continue };
@@ -654,8 +933,23 @@ fn transcribe_chunk_ranges_parakeet_pool(
         aggregate.skipped_no_speech += chunk_result.stats.skipped_no_speech;
         aggregate.after_no_speech_filter += chunk_result.stats.after_no_speech_filter;
         aggregate.rescued_no_speech += chunk_result.stats.rescued_no_speech;
-        all_lines.extend(offset_lines);
+        per_chunk_lines[chunk_index] = offset_lines;
     }
+
+    // Overlap-aware pairwise merge pass (parakeet-only). Runs only when
+    // `[transcription.chunked] overlap_seconds > 0` AND the chunk ranges
+    // actually overlap (derived empirically by comparing adjacent pairs).
+    // Emits one `TranscribeSeamResolved` event per seam.
+    let overlap_sec = config.transcription.chunked.overlap_seconds as usize;
+    let chunks_overlap = overlap_sec > 0 && ranges_overlap(chunk_ranges);
+    let all_lines: Vec<String> = if chunks_overlap {
+        let overlap_samples = 16_000 * overlap_sec;
+        let seams = overlap_seam_windows(chunk_ranges, overlap_samples);
+        assemble_with_merge(audio_path, &per_chunk_lines, &seams, config)
+    } else {
+        // No overlap configured or ranges are adjacent — legacy concat path.
+        per_chunk_lines.into_iter().flatten().collect()
+    };
 
     if all_lines.is_empty() {
         return Ok(None);
@@ -869,13 +1163,33 @@ fn transcribe_parakeet_dispatch(
             } else {
                 PARAKEET_LONG_AUDIO_CHUNK_SECS
             };
-            tracing::info!(
-                chunks = chunk_ranges.len(),
-                audio_secs = format!("{:.1}", audio_duration_secs),
-                chunk_secs,
-                native_vad = native_vad_path.is_some(),
-                "chunking long parakeet transcription to avoid monolithic decode"
-            );
+            // If the user has opted into overlapping chunks + pairwise
+            // merge, extend the ranges here. The ranges become the
+            // overlap-aware chunk windows; the pool path detects the
+            // overlap via `config.transcription.chunked.overlap_seconds`
+            // and feeds the merge module during assembly.
+            let overlap_sec = config.transcription.chunked.overlap_seconds as usize;
+            let chunk_ranges = if overlap_sec > 0 && overlap_sec < chunk_secs {
+                let overlapping = overlapping_chunk_ranges(samples.len(), chunk_secs, overlap_sec);
+                tracing::info!(
+                    chunks = overlapping.len(),
+                    audio_secs = format!("{:.1}", audio_duration_secs),
+                    chunk_secs,
+                    overlap_sec,
+                    native_vad = native_vad_path.is_some(),
+                    "chunking long parakeet transcription (overlapping) for pairwise merge"
+                );
+                overlapping
+            } else {
+                tracing::info!(
+                    chunks = chunk_ranges.len(),
+                    audio_secs = format!("{:.1}", audio_duration_secs),
+                    chunk_secs,
+                    native_vad = native_vad_path.is_some(),
+                    "chunking long parakeet transcription to avoid monolithic decode"
+                );
+                chunk_ranges
+            };
             if let Some(result) = transcribe_chunk_ranges(
                 audio_path,
                 &samples,
@@ -3809,5 +4123,132 @@ Hello there.
     fn parakeet_gpu_unavailable_matches_runtime_error() {
         assert!(parakeet_gpu_unavailable("Error: Metal GPU not available"));
         assert!(!parakeet_gpu_unavailable("Error: tokenizer file missing"));
+    }
+
+    // ── Overlap + merge helpers (PR B) ────────────────────────
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn overlapping_chunk_ranges_creates_shared_region() {
+        // 30s audio, 20s chunks, 10s overlap → chunks 0-20s and 10-30s share
+        // the 10-20s region.
+        let chunks = overlapping_chunk_ranges(16_000 * 30, 20, 10);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], (0, 16_000 * 20));
+        assert_eq!(chunks[1], (16_000 * 10, 16_000 * 30));
+        // Invariant: consecutive chunks share `overlap_samples`.
+        for pair in chunks.windows(2) {
+            let shared = pair[0].1.saturating_sub(pair[1].0);
+            assert_eq!(shared, 16_000 * 10);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn overlapping_chunk_ranges_handles_zero_overlap() {
+        // overlap = 0 should degenerate to non-overlapping ranges.
+        let with_overlap = overlapping_chunk_ranges(16_000 * 60, 20, 0);
+        let without_overlap = fixed_length_chunks(16_000 * 60, 16_000 * 20);
+        assert_eq!(with_overlap, without_overlap);
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn overlapping_chunk_ranges_short_audio_single_chunk() {
+        // Audio shorter than chunk_len → one chunk.
+        let chunks = overlapping_chunk_ranges(16_000 * 5, 20, 10);
+        assert_eq!(chunks, vec![(0, 16_000 * 5)]);
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn overlapping_chunk_ranges_degenerates_when_overlap_too_large() {
+        // overlap >= chunk_len is nonsense; fall back to non-overlapping.
+        let chunks = overlapping_chunk_ranges(16_000 * 60, 10, 15);
+        // Same as fixed_length_chunks at chunk_len = 10s.
+        assert_eq!(chunks.len(), 6);
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn ranges_overlap_detects_overlap() {
+        let non_overlapping = vec![(0, 10), (10, 20), (20, 30)];
+        assert!(!ranges_overlap(&non_overlapping));
+        let overlapping = vec![(0, 10), (5, 15), (10, 20)];
+        assert!(ranges_overlap(&overlapping));
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn parse_line_timestamp_secs_basic() {
+        assert_eq!(parse_line_timestamp_secs("[0:15] hello"), Some(15.0));
+        assert_eq!(parse_line_timestamp_secs("[1:30] world"), Some(90.0));
+        assert_eq!(parse_line_timestamp_secs("no timestamp"), None);
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn strip_timestamps_joins_lines() {
+        let lines = vec!["[0:10] hello world", "[0:12] how are you"];
+        assert_eq!(strip_timestamps(&lines), "hello world how are you");
+    }
+
+    /// End-to-end merge assembly test: feed synthetic per-chunk lines
+    /// that overlap at a known seam, assert the merged output contains
+    /// the expected text exactly once (no duplication from the overlap).
+    ///
+    /// Event emission is covered by `events::tests::transcribe_progress_events_roundtrip`;
+    /// this test focuses on the assembly invariant and stays free of
+    /// HOME / env mutation so it doesn't race with summarize tests.
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn assemble_with_merge_tier1_exact_match_dedups_overlap() {
+        // Chunk 0: 0-20s with overlap region at 10-20s containing "shared text here"
+        // Chunk 1: 10-30s with same overlap region containing "shared text here"
+        let chunk0_lines = vec![
+            "[0:00] intro words".to_string(),
+            "[0:05] more intro".to_string(),
+            "[0:12] shared text here".to_string(),
+        ];
+        let chunk1_lines = vec![
+            "[0:12] shared text here".to_string(),
+            "[0:22] later content".to_string(),
+            "[0:25] even later".to_string(),
+        ];
+        let seams = vec![OverlapSeam {
+            chunk_n_index: 0,
+            overlap_start_sec: 10.0,
+            overlap_end_sec: 20.0,
+        }];
+        let cfg = Config::default();
+
+        let audio_path = std::path::Path::new("/tmp/test-assemble.wav");
+        let out = assemble_with_merge(audio_path, &[chunk0_lines, chunk1_lines], &seams, &cfg);
+
+        let joined = out.join("\n");
+        assert!(joined.contains("intro words"), "out = {out:?}");
+        assert!(joined.contains("shared text here"), "out = {out:?}");
+        assert!(joined.contains("later content"), "out = {out:?}");
+        // Shared text shows once (the merged region) — both chunk 0's tail
+        // and chunk 1's head are excluded from the core body.
+        let shared_count = joined.matches("shared text here").count();
+        assert_eq!(
+            shared_count, 1,
+            "merged seam should contain shared text exactly once: {out:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "parakeet")]
+    fn assemble_with_merge_single_chunk_passthrough() {
+        let chunk_lines = vec![
+            "[0:00] only chunk".to_string(),
+            "[0:03] line two".to_string(),
+        ];
+        let seams: Vec<OverlapSeam> = Vec::new();
+        let cfg = Config::default();
+        let audio_path = std::path::Path::new("/tmp/test-single.wav");
+        let out = assemble_with_merge(audio_path, std::slice::from_ref(&chunk_lines), &seams, &cfg);
+        assert_eq!(out, chunk_lines, "single-chunk input should pass through");
     }
 }

@@ -18,6 +18,7 @@ pub mod knowledge;
 pub mod knowledge_extract;
 pub mod logging;
 pub mod markdown;
+pub mod merge;
 pub mod notes;
 pub mod palette;
 pub mod parakeet;

@@ -804,7 +804,7 @@ fn transcribe_chunk_ranges(
         if config.transcription.engine == "parakeet" {
             let worker_count = effective_parakeet_worker_count(config, chunk_ranges.len());
             if worker_count >= 2 {
-                return transcribe_chunk_ranges_parakeet_pool(
+                match transcribe_chunk_ranges_parakeet_pool(
                     audio_path,
                     samples,
                     chunk_ranges,
@@ -812,7 +812,30 @@ fn transcribe_chunk_ranges(
                     config,
                     hints,
                     worker_count,
-                );
+                ) {
+                    Ok(result) => return Ok(result),
+                    Err(TranscribeError::ParakeetFailed(msg))
+                        if msg.contains("could not resolve example-server")
+                            || msg.contains("parakeet pool init failed") =>
+                    {
+                        // Graceful fallback: parallel pool needs the
+                        // parakeet.cpp `example-server` binary, which not every
+                        // parakeet.cpp build ships. When it's missing, fall
+                        // through to the sequential subprocess-per-chunk path
+                        // (uses the regular `parakeet` batch binary that the
+                        // user already has). They lose the parallel speedup
+                        // but get a working transcription.
+                        tracing::warn!(
+                            audio_path = %audio_path.display(),
+                            error = %msg,
+                            "parakeet sidecar pool unavailable; falling back to sequential per-chunk transcription. \
+                             Install `example-server` from parakeet.cpp (or set MINUTES_PARAKEET_SERVER_BINARY) \
+                             to enable the parallel pool."
+                        );
+                        // fall through to sequential loop below
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         }
     }

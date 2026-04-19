@@ -1027,6 +1027,7 @@ fn transcribe_chunk_ranges_parakeet_pool(
             success.result.first_request_on_process,
             success.result.elapsed_ms,
             config,
+            hints,
         );
         let chunk_result = match per_chunk {
             Ok(r) => r,

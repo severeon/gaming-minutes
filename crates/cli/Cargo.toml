@@ -49,5 +49,8 @@ pyannote-rs = { workspace = true, optional = true }
 ort = { version = "=2.0.0-rc.10", optional = true }
 symphonia = { workspace = true, optional = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

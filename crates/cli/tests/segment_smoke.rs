@@ -49,3 +49,46 @@ fn segment_demo_no_diarize_emits_valid_json() {
         "params.diarize should be false"
     );
 }
+
+#[test]
+fn segment_preserves_timestamp_precision_in_params() {
+    let demo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("assets")
+        .join("demo.wav");
+    assert!(demo.exists(), "demo fixture missing at {}", demo.display());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_minutes"))
+        .args([
+            "segment",
+            demo.to_str().unwrap(),
+            "--no-diarize",
+            "--min-secs",
+            "0.1",
+            "--start",
+            "00:00:00.500",
+            "--end",
+            "00:00:02.750",
+        ])
+        .output()
+        .expect("run minutes segment");
+    assert!(
+        output.status.success(),
+        "minutes segment exited with {}: stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("output should be valid JSON");
+    assert_eq!(
+        json["params"]["start"].as_str(),
+        Some("00:00:00.500"),
+        "params.start must preserve millisecond precision"
+    );
+    assert_eq!(
+        json["params"]["end"].as_str(),
+        Some("00:00:02.750"),
+        "params.end must preserve millisecond precision"
+    );
+}

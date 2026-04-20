@@ -3334,14 +3334,8 @@ fn cmd_segment(
         .as_ref()
         .and_then(|p| std::fs::read_to_string(p).ok());
 
-    let start_str = seg::format_timestamp(start_sec)
-        .chars()
-        .take(8)
-        .collect::<String>();
-    let end_str = seg::format_timestamp(end_sec)
-        .chars()
-        .take(8)
-        .collect::<String>();
+    let start_str = seg::format_timestamp(start_sec);
+    let end_str = seg::format_timestamp(end_sec);
 
     let model_versions = seg::ModelVersions {
         diarization: config.diarization.engine.clone(),

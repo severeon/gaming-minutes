@@ -383,6 +383,138 @@ fn truncate_on_word_boundary(s: &str, limit: usize) -> String {
     acc
 }
 
+/// Internal assembly args — separated from CLI-facing `SegmentArgs` so
+/// unit tests can build a report without hitting pyannote or the filesystem.
+pub struct BuildArgs {
+    /// Absolute path to the input audio file.
+    pub audio_path: PathBuf,
+    /// Transcript markdown path if known.
+    pub transcript_path: Option<PathBuf>,
+    /// Duration of the clipped audio window in seconds.
+    pub audio_duration_seconds: f64,
+    /// Whether diarization was enabled.
+    pub diarize: bool,
+    /// Minimum segment duration in seconds.
+    pub min_segment_seconds: f64,
+    /// Merge gap threshold in seconds.
+    pub merge_gap_seconds: f64,
+    /// Clip start as HH:MM:SS string (for the output `params` block).
+    pub start_str: String,
+    /// Clip end as HH:MM:SS string (for the output `params` block).
+    pub end_str: String,
+    /// voices.db paths to consult for voice matching.
+    pub voices_paths: Vec<PathBuf>,
+    /// Whether to emit base64 embeddings in the `speakers` block.
+    pub emit_embeddings: bool,
+    /// Whether to populate `transcript_preview` on segments.
+    pub emit_preview_text: bool,
+    /// Max chars for each preview (truncated at word boundary).
+    pub preview_char_limit: usize,
+    /// Loaded transcript markdown content (for preview extraction).
+    pub transcript_markdown: Option<String>,
+    /// Model version strings to surface in the `source.model_versions` block.
+    pub model_versions: ModelVersions,
+    /// Minimum cosine similarity for a `voice_match` to stick.
+    pub voice_match_threshold: f32,
+}
+
+/// Build a `SegmentationReport` from a diarization result.
+/// Pure function: does not touch the filesystem or call pyannote.
+pub fn build_report_from_diarization(
+    diar: &crate::diarize::DiarizationResult,
+    args: &BuildArgs,
+) -> SegmentationReport {
+    let merged = merge_same_speaker(&diar.segments, args.merge_gap_seconds);
+    let kept = filter_min_duration(&merged, args.min_segment_seconds);
+
+    let mut surviving_speakers: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    for seg in &kept {
+        surviving_speakers.insert(seg.speaker.clone());
+    }
+
+    let mut speakers: BTreeMap<String, SpeakerEntry> = BTreeMap::new();
+    for label in &surviving_speakers {
+        let averaged = diar.speaker_embeddings.get(label);
+        let embedding = if args.emit_embeddings {
+            averaged.map(|e| encode_embedding(e))
+        } else {
+            None
+        };
+        let voice_match = averaged.and_then(|e| {
+            match_against_voices_dbs(e, &args.voices_paths, args.voice_match_threshold)
+        });
+        speakers.insert(
+            label.clone(),
+            SpeakerEntry {
+                embedding,
+                voice_match,
+            },
+        );
+    }
+
+    let mut total_voiced_seconds = 0.0;
+    let mut unmatched = 0_u32;
+    let segments: Vec<Segment> = kept
+        .iter()
+        .enumerate()
+        .map(|(i, seg)| {
+            let duration = seg.end - seg.start;
+            total_voiced_seconds += duration;
+            let label = Some(seg.speaker.clone());
+            if let Some(ref l) = label {
+                if speakers
+                    .get(l)
+                    .and_then(|s| s.voice_match.as_ref())
+                    .is_none()
+                {
+                    unmatched += 1;
+                }
+            }
+            let preview = if args.emit_preview_text {
+                args.transcript_markdown.as_deref().and_then(|md| {
+                    transcript_preview(md, seg.start, seg.end, args.preview_char_limit)
+                })
+            } else {
+                None
+            };
+            Segment {
+                id: i as u32,
+                start: format_timestamp(seg.start),
+                end: format_timestamp(seg.end),
+                duration_seconds: duration,
+                speaker_label: label,
+                transcript_preview: preview,
+            }
+        })
+        .collect();
+
+    let segment_count = kept.len() as u32;
+
+    SegmentationReport {
+        source: Source {
+            audio_path: args.audio_path.clone(),
+            transcript_path: args.transcript_path.clone(),
+            duration_seconds: args.audio_duration_seconds,
+            model_versions: args.model_versions.clone(),
+        },
+        params: Params {
+            diarize: args.diarize,
+            min_segment_seconds: args.min_segment_seconds,
+            start: args.start_str.clone(),
+            end: args.end_str.clone(),
+            voices_paths: args.voices_paths.clone(),
+        },
+        speakers: Some(speakers),
+        segments,
+        stats: Stats {
+            segment_count,
+            total_voiced_seconds,
+            unmatched_segments: unmatched,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,6 +807,123 @@ mod tests {
         let md = "[0:03] too early\n[1:00] too late\n";
         let p = transcript_preview(md, 10.0, 50.0, 120);
         assert!(p.is_none());
+    }
+
+    #[test]
+    fn build_report_populates_speakers_and_segments() {
+        let diar = crate::diarize::DiarizationResult {
+            segments: vec![
+                crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 12.0 },
+                crate::diarize::SpeakerSegment { speaker: "SPEAKER_1".into(), start: 13.0, end: 30.0 },
+            ],
+            num_speakers: 2,
+            from_stems: false,
+            speaker_embeddings: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("SPEAKER_0".to_string(), vec![0.1_f32; 192]);
+                m.insert("SPEAKER_1".to_string(), vec![0.2_f32; 192]);
+                m
+            },
+        };
+        let args = BuildArgs {
+            audio_path: "/tmp/demo.wav".into(),
+            transcript_path: None,
+            audio_duration_seconds: 60.0,
+            diarize: true,
+            min_segment_seconds: 10.0,
+            merge_gap_seconds: 0.5,
+            start_str: "00:00:00".into(),
+            end_str: "00:01:00".into(),
+            voices_paths: vec![],
+            emit_embeddings: true,
+            emit_preview_text: false,
+            preview_char_limit: 120,
+            transcript_markdown: None,
+            model_versions: ModelVersions::default(),
+            voice_match_threshold: 0.65,
+        };
+        let report = build_report_from_diarization(&diar, &args);
+        let speakers = report.speakers.expect("speakers block");
+        assert_eq!(speakers.len(), 2);
+        assert!(speakers.contains_key("SPEAKER_0"));
+        assert!(speakers["SPEAKER_0"].embedding.is_some());
+        assert_eq!(report.segments.len(), 2);
+        assert_eq!(report.stats.segment_count, 2);
+    }
+
+    #[test]
+    fn build_report_drops_speaker_when_all_segments_below_min() {
+        let diar = crate::diarize::DiarizationResult {
+            segments: vec![
+                crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 15.0 },
+                crate::diarize::SpeakerSegment { speaker: "SPEAKER_1".into(), start: 16.0, end: 20.0 },
+            ],
+            num_speakers: 2,
+            from_stems: false,
+            speaker_embeddings: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("SPEAKER_0".to_string(), vec![0.1; 192]);
+                m.insert("SPEAKER_1".to_string(), vec![0.2; 192]);
+                m
+            },
+        };
+        let args = BuildArgs {
+            audio_path: "/tmp/demo.wav".into(),
+            transcript_path: None,
+            audio_duration_seconds: 30.0,
+            diarize: true,
+            min_segment_seconds: 10.0,
+            merge_gap_seconds: 0.5,
+            start_str: "00:00:00".into(),
+            end_str: "00:00:30".into(),
+            voices_paths: vec![],
+            emit_embeddings: true,
+            emit_preview_text: false,
+            preview_char_limit: 120,
+            transcript_markdown: None,
+            model_versions: ModelVersions::default(),
+            voice_match_threshold: 0.65,
+        };
+        let report = build_report_from_diarization(&diar, &args);
+        let speakers = report.speakers.unwrap();
+        assert!(speakers.contains_key("SPEAKER_0"));
+        assert!(!speakers.contains_key("SPEAKER_1"));
+        assert_eq!(report.segments.len(), 1);
+    }
+
+    #[test]
+    fn build_report_omits_embeddings_when_config_off() {
+        let diar = crate::diarize::DiarizationResult {
+            segments: vec![crate::diarize::SpeakerSegment {
+                speaker: "SPEAKER_0".into(), start: 0.0, end: 15.0,
+            }],
+            num_speakers: 1,
+            from_stems: false,
+            speaker_embeddings: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("SPEAKER_0".to_string(), vec![0.1; 192]);
+                m
+            },
+        };
+        let args = BuildArgs {
+            audio_path: "/tmp/demo.wav".into(),
+            transcript_path: None,
+            audio_duration_seconds: 30.0,
+            diarize: true,
+            min_segment_seconds: 10.0,
+            merge_gap_seconds: 0.5,
+            start_str: "00:00:00".into(),
+            end_str: "00:00:30".into(),
+            voices_paths: vec![],
+            emit_embeddings: false,
+            emit_preview_text: false,
+            preview_char_limit: 120,
+            transcript_markdown: None,
+            model_versions: ModelVersions::default(),
+            voice_match_threshold: 0.65,
+        };
+        let report = build_report_from_diarization(&diar, &args);
+        assert!(report.speakers.unwrap()["SPEAKER_0"].embedding.is_none());
     }
 
     #[test]

@@ -187,6 +187,7 @@ pub struct Stats {
     pub unmatched_segments: u32,
 }
 
+use crate::diarize::SpeakerSegment;
 use base64::Engine as _;
 
 /// Encode an f32 embedding vector as base64-encoded little-endian
@@ -275,6 +276,36 @@ pub fn match_against_voices_dbs(
         }),
         _ => None,
     }
+}
+
+/// Merge consecutive same-speaker segments where the gap between them
+/// is below `max_gap_seconds`. Input must be sorted by start time.
+pub fn merge_same_speaker(input: &[SpeakerSegment], max_gap_seconds: f64) -> Vec<SpeakerSegment> {
+    let mut out: Vec<SpeakerSegment> = Vec::with_capacity(input.len());
+    for seg in input {
+        match out.last_mut() {
+            Some(last)
+                if last.speaker == seg.speaker
+                    && (seg.start - last.end) < max_gap_seconds =>
+            {
+                last.end = seg.end;
+            }
+            _ => out.push(seg.clone()),
+        }
+    }
+    out
+}
+
+/// Drop segments whose duration is strictly less than `min_duration_seconds`.
+pub fn filter_min_duration(
+    input: &[SpeakerSegment],
+    min_duration_seconds: f64,
+) -> Vec<SpeakerSegment> {
+    input
+        .iter()
+        .filter(|s| (s.end - s.start) >= min_duration_seconds)
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -476,6 +507,61 @@ mod tests {
         query[1] = 1.0; // orthogonal
         let result = match_against_voices_dbs(&query, &[tmp.path().to_path_buf()], 0.65);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn merger_combines_adjacent_same_speaker() {
+        let input = vec![
+            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 5.0 },
+            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 5.2, end: 10.0 },
+        ];
+        let merged = merge_same_speaker(&input, 0.5);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].start, 0.0);
+        assert_eq!(merged[0].end, 10.0);
+    }
+
+    #[test]
+    fn merger_preserves_gap_above_threshold() {
+        let input = vec![
+            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 5.0 },
+            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 6.0, end: 10.0 },
+        ];
+        let merged = merge_same_speaker(&input, 0.5);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn merger_preserves_speaker_change() {
+        let input = vec![
+            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 5.0 },
+            crate::diarize::SpeakerSegment { speaker: "SPEAKER_1".into(), start: 5.1, end: 10.0 },
+        ];
+        let merged = merge_same_speaker(&input, 0.5);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].speaker, "SPEAKER_0");
+        assert_eq!(merged[1].speaker, "SPEAKER_1");
+    }
+
+    #[test]
+    fn filter_drops_below_min_duration() {
+        let input = vec![
+            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 5.0 },
+            crate::diarize::SpeakerSegment { speaker: "SPEAKER_1".into(), start: 6.0, end: 20.0 },
+        ];
+        let kept = filter_min_duration(&input, 10.0);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].speaker, "SPEAKER_1");
+    }
+
+    #[test]
+    fn filter_keeps_exact_min_duration() {
+        let input = vec![crate::diarize::SpeakerSegment {
+            speaker: "SPEAKER_0".into(),
+            start: 0.0,
+            end: 10.0,
+        }];
+        assert_eq!(filter_min_duration(&input, 10.0).len(), 1);
     }
 
     #[test]

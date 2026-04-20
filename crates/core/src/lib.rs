@@ -33,6 +33,7 @@ pub mod pipeline;
 pub(crate) mod resample;
 pub mod screen;
 pub mod search;
+pub mod segmentation;
 pub mod summarize;
 pub mod transcribe;
 pub mod transcription_coordinator;

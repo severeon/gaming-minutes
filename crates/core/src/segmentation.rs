@@ -830,6 +830,7 @@ mod tests {
             &emb,
             "test",
             crate::voice::model_version(&cfg),
+            None,
         )
         .unwrap();
 
@@ -1141,10 +1142,10 @@ mod tests {
 
         let mut alice = vec![0.0_f32; 192];
         alice[0] = 1.0;
-        crate::voice::save_profile(&db_a, "alice", "Alice", &alice, "test", mv).unwrap();
+        crate::voice::save_profile(&db_a, "alice", "Alice", &alice, "test", mv, None).unwrap();
 
         let bob = vec![0.1_f32; 192];
-        crate::voice::save_profile(&db_b, "bob", "Bob", &bob, "test", mv).unwrap();
+        crate::voice::save_profile(&db_b, "bob", "Bob", &bob, "test", mv, None).unwrap();
 
         let query = bob.clone();
         let result = match_against_voices_dbs(

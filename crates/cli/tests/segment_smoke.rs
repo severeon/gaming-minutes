@@ -160,3 +160,72 @@ fn segment_auto_detects_companion_markdown_for_preview() {
         }
     }
 }
+
+#[test]
+fn segment_synthetic_wav_produces_expected_region() {
+    use hound::{SampleFormat, WavSpec, WavWriter};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let wav_path = tmp.path().join("synthetic.wav");
+
+    // 16kHz mono i16 PCM — maximum decoder compatibility.
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(&wav_path, spec).expect("create wav");
+
+    // 1s silence
+    for _ in 0..16_000 {
+        writer.write_sample(0_i16).unwrap();
+    }
+    // 12s loud — amplitude ~0.3 full-scale = ~9830 for i16.
+    // Square wave (alternating sign) gives stable RMS well above VAD threshold.
+    let amp: i16 = 9_830;
+    for i in 0..(16_000u32 * 12) {
+        let s = if i % 2 == 0 { amp } else { -amp };
+        writer.write_sample(s).unwrap();
+    }
+    // 1s silence
+    for _ in 0..16_000 {
+        writer.write_sample(0_i16).unwrap();
+    }
+    writer.finalize().expect("finalize wav");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_minutes"))
+        .args([
+            "segment",
+            wav_path.to_str().unwrap(),
+            "--no-diarize",
+            "--min-secs",
+            "10",
+        ])
+        .output()
+        .expect("run minutes segment");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let segment_count = json["stats"]["segment_count"]
+        .as_u64()
+        .expect("segment_count is integer");
+    assert_eq!(
+        segment_count, 1,
+        "expected exactly one 12s region, got JSON: {}",
+        json
+    );
+
+    let duration = json["segments"][0]["duration_seconds"]
+        .as_f64()
+        .expect("duration_seconds is number");
+    assert!(
+        duration >= 10.0,
+        "segment duration should be >= 10s (we generated 12s of loud signal), got {}",
+        duration
+    );
+}

@@ -515,6 +515,130 @@ pub fn build_report_from_diarization(
     }
 }
 
+/// Run energy-based VAD over PCM and return `(start_sec, end_sec)`
+/// regions of continuous voice activity ≥ `min_duration_seconds`.
+///
+/// Processes the signal in 100ms chunks, computing RMS energy per chunk
+/// and applying an adaptive noise floor with 500ms hangover. This replicates
+/// the logic of [`crate::vad::Vad`] without requiring the `streaming` feature.
+pub fn vad_voiced_regions(
+    pcm: &[f32],
+    sample_rate: u32,
+    min_duration_seconds: f64,
+) -> Vec<(f64, f64)> {
+    let chunk_ms: u64 = 100;
+    let chunk_len = (sample_rate as u64 * chunk_ms / 1000) as usize;
+    if chunk_len == 0 || pcm.is_empty() {
+        return Vec::new();
+    }
+
+    // Inline energy-VAD state (mirrors crate::vad::Vad defaults)
+    let mut noise_floor: f32 = 0.001;
+    let multiplier: f32 = 4.0;
+    let adapt_rate: f32 = 0.02;
+    let hangover_chunks: u32 = 5; // 500 ms
+    let mut hangover_remaining: u32 = 0;
+    let mut is_speaking = false;
+
+    let mut regions: Vec<(f64, f64)> = Vec::new();
+    let mut current: Option<(f64, f64)> = None;
+
+    for (chunk_idx, chunk) in pcm.chunks(chunk_len).enumerate() {
+        let rms = if chunk.is_empty() {
+            0.0_f32
+        } else {
+            let sum: f32 = chunk.iter().map(|x| x * x).sum();
+            (sum / chunk.len() as f32).sqrt()
+        };
+
+        let threshold = noise_floor * multiplier;
+        if rms > threshold {
+            is_speaking = true;
+            hangover_remaining = hangover_chunks;
+        } else if hangover_remaining > 0 {
+            hangover_remaining -= 1;
+        } else {
+            is_speaking = false;
+            // Adapt noise floor during confirmed silence
+            if rms > noise_floor {
+                noise_floor += (rms - noise_floor) * adapt_rate;
+            } else {
+                noise_floor += (rms - noise_floor) * (adapt_rate * 3.0);
+            }
+            noise_floor = noise_floor.clamp(0.0001, 0.02);
+        }
+
+        let start_sec = (chunk_idx * chunk_len) as f64 / sample_rate as f64;
+        let end_sec = start_sec + chunk_ms as f64 / 1000.0;
+        if is_speaking {
+            match current.as_mut() {
+                Some(r) => r.1 = end_sec,
+                None => current = Some((start_sec, end_sec)),
+            }
+        } else if let Some(r) = current.take() {
+            regions.push(r);
+        }
+    }
+    if let Some(r) = current.take() {
+        regions.push(r);
+    }
+    regions
+        .into_iter()
+        .filter(|(s, e)| (e - s) >= min_duration_seconds)
+        .collect()
+}
+
+/// Build a `SegmentationReport` from VAD-only output (no diarization).
+/// Sets `speakers: None` and `speaker_label: None` on every segment.
+pub fn build_report_from_vad(regions: &[(f64, f64)], args: &BuildArgs) -> SegmentationReport {
+    let mut total_voiced_seconds = 0.0;
+    let segments: Vec<Segment> = regions
+        .iter()
+        .enumerate()
+        .map(|(i, (start, end))| {
+            let duration = end - start;
+            total_voiced_seconds += duration;
+            let preview = if args.emit_preview_text {
+                args.transcript_markdown
+                    .as_deref()
+                    .and_then(|md| transcript_preview(md, *start, *end, args.preview_char_limit))
+            } else {
+                None
+            };
+            Segment {
+                id: i as u32,
+                start: format_timestamp(*start),
+                end: format_timestamp(*end),
+                duration_seconds: duration,
+                speaker_label: None,
+                transcript_preview: preview,
+            }
+        })
+        .collect();
+    SegmentationReport {
+        source: Source {
+            audio_path: args.audio_path.clone(),
+            transcript_path: args.transcript_path.clone(),
+            duration_seconds: args.audio_duration_seconds,
+            model_versions: args.model_versions.clone(),
+        },
+        params: Params {
+            diarize: false,
+            min_segment_seconds: args.min_segment_seconds,
+            start: args.start_str.clone(),
+            end: args.end_str.clone(),
+            voices_paths: args.voices_paths.clone(),
+        },
+        speakers: None,
+        segments,
+        stats: Stats {
+            segment_count: regions.len() as u32,
+            total_voiced_seconds,
+            unmatched_segments: 0,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -889,6 +1013,36 @@ mod tests {
         assert!(speakers.contains_key("SPEAKER_0"));
         assert!(!speakers.contains_key("SPEAKER_1"));
         assert_eq!(report.segments.len(), 1);
+    }
+
+    #[test]
+    fn vad_regions_detect_single_long_active_block() {
+        let sample_rate = 16_000_u32;
+        let mut pcm = Vec::new();
+        // 1s silence
+        pcm.extend(std::iter::repeat(0.0_f32).take(sample_rate as usize));
+        // 12s loud
+        pcm.extend(std::iter::repeat(0.3_f32).take((sample_rate * 12) as usize));
+        // 1s silence
+        pcm.extend(std::iter::repeat(0.0_f32).take(sample_rate as usize));
+
+        let regions = vad_voiced_regions(&pcm, sample_rate, 10.0);
+        assert_eq!(regions.len(), 1);
+        let (start, end) = regions[0];
+        assert!(start < 2.0); // hangover can nudge start
+        assert!((end - start) >= 10.0);
+    }
+
+    #[test]
+    fn vad_regions_filter_short_blocks() {
+        let sample_rate = 16_000_u32;
+        let mut pcm = Vec::new();
+        pcm.extend(std::iter::repeat(0.0_f32).take(sample_rate as usize));
+        // 3s voiced — below 10s threshold
+        pcm.extend(std::iter::repeat(0.3_f32).take((sample_rate * 3) as usize));
+        pcm.extend(std::iter::repeat(0.0_f32).take(sample_rate as usize));
+        let regions = vad_voiced_regions(&pcm, sample_rate, 10.0);
+        assert!(regions.is_empty());
     }
 
     #[test]

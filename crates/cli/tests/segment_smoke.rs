@@ -29,8 +29,8 @@ fn segment_demo_no_diarize_emits_valid_json() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .expect("output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("output should be valid JSON");
     assert!(json.get("source").is_some(), "source block present");
     assert!(json.get("params").is_some(), "params block present");
     assert!(json.get("segments").is_some(), "segments block present");

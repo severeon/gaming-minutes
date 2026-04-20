@@ -25,7 +25,7 @@ pub fn parse_timestamp(s: &str) -> Result<f64, TimestampError> {
     let seconds: f64 = parts[2]
         .parse()
         .map_err(|_| TimestampError::Format(s.to_string()))?;
-    if minutes >= 60 || seconds < 0.0 || seconds >= 60.0 {
+    if minutes >= 60 || !(0.0..60.0).contains(&seconds) {
         return Err(TimestampError::OutOfRange(s.to_string()));
     }
     Ok((hours as f64) * 3600.0 + (minutes as f64) * 60.0 + seconds)
@@ -60,11 +60,9 @@ impl fmt::Display for TimestampError {
                 "invalid timestamp '{}': expected HH:MM:SS or HH:MM:SS.sss",
                 s
             ),
-            Self::OutOfRange(s) => write!(
-                f,
-                "timestamp '{}' has minutes or seconds out of [0, 60)",
-                s
-            ),
+            Self::OutOfRange(s) => {
+                write!(f, "timestamp '{}' has minutes or seconds out of [0, 60)", s)
+            }
         }
     }
 }
@@ -225,11 +223,9 @@ impl fmt::Display for EmbeddingDecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Base64(s) => write!(f, "base64 decode failed: {}", s),
-            Self::TruncatedFloat(n) => write!(
-                f,
-                "embedding byte length {} is not a multiple of 4",
-                n
-            ),
+            Self::TruncatedFloat(n) => {
+                write!(f, "embedding byte length {} is not a multiple of 4", n)
+            }
         }
     }
 }
@@ -262,7 +258,7 @@ pub fn match_against_voices_dbs(
         };
         for p in profiles {
             let sim = crate::voice::cosine_similarity(query, &p.embedding);
-            let is_better = best.as_ref().map_or(true, |(_, _, s)| sim > *s);
+            let is_better = best.as_ref().is_none_or(|(_, _, s)| sim > *s);
             if is_better {
                 best = Some((p.person_slug.clone(), p.name.clone(), sim));
             }
@@ -285,8 +281,7 @@ pub fn merge_same_speaker(input: &[SpeakerSegment], max_gap_seconds: f64) -> Vec
     for seg in input {
         match out.last_mut() {
             Some(last)
-                if last.speaker == seg.speaker
-                    && (seg.start - last.end) < max_gap_seconds =>
+                if last.speaker == seg.speaker && (seg.start - last.end) < max_gap_seconds =>
             {
                 last.end = seg.end;
             }
@@ -784,7 +779,11 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&report).unwrap();
-        assert!(!json.contains("\"speakers\""), "speakers should be omitted, got: {}", json);
+        assert!(
+            !json.contains("\"speakers\""),
+            "speakers should be omitted, got: {}",
+            json
+        );
         assert!(
             !json.contains("\"speaker_label\""),
             "speaker_label should be omitted, got: {}",
@@ -843,8 +842,16 @@ mod tests {
     #[test]
     fn merger_combines_adjacent_same_speaker() {
         let input = vec![
-            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 5.0 },
-            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 5.2, end: 10.0 },
+            crate::diarize::SpeakerSegment {
+                speaker: "SPEAKER_0".into(),
+                start: 0.0,
+                end: 5.0,
+            },
+            crate::diarize::SpeakerSegment {
+                speaker: "SPEAKER_0".into(),
+                start: 5.2,
+                end: 10.0,
+            },
         ];
         let merged = merge_same_speaker(&input, 0.5);
         assert_eq!(merged.len(), 1);
@@ -855,8 +862,16 @@ mod tests {
     #[test]
     fn merger_preserves_gap_above_threshold() {
         let input = vec![
-            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 5.0 },
-            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 6.0, end: 10.0 },
+            crate::diarize::SpeakerSegment {
+                speaker: "SPEAKER_0".into(),
+                start: 0.0,
+                end: 5.0,
+            },
+            crate::diarize::SpeakerSegment {
+                speaker: "SPEAKER_0".into(),
+                start: 6.0,
+                end: 10.0,
+            },
         ];
         let merged = merge_same_speaker(&input, 0.5);
         assert_eq!(merged.len(), 2);
@@ -865,8 +880,16 @@ mod tests {
     #[test]
     fn merger_preserves_speaker_change() {
         let input = vec![
-            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 5.0 },
-            crate::diarize::SpeakerSegment { speaker: "SPEAKER_1".into(), start: 5.1, end: 10.0 },
+            crate::diarize::SpeakerSegment {
+                speaker: "SPEAKER_0".into(),
+                start: 0.0,
+                end: 5.0,
+            },
+            crate::diarize::SpeakerSegment {
+                speaker: "SPEAKER_1".into(),
+                start: 5.1,
+                end: 10.0,
+            },
         ];
         let merged = merge_same_speaker(&input, 0.5);
         assert_eq!(merged.len(), 2);
@@ -877,8 +900,16 @@ mod tests {
     #[test]
     fn filter_drops_below_min_duration() {
         let input = vec![
-            crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 5.0 },
-            crate::diarize::SpeakerSegment { speaker: "SPEAKER_1".into(), start: 6.0, end: 20.0 },
+            crate::diarize::SpeakerSegment {
+                speaker: "SPEAKER_0".into(),
+                start: 0.0,
+                end: 5.0,
+            },
+            crate::diarize::SpeakerSegment {
+                speaker: "SPEAKER_1".into(),
+                start: 6.0,
+                end: 20.0,
+            },
         ];
         let kept = filter_min_duration(&input, 10.0);
         assert_eq!(kept.len(), 1);
@@ -937,8 +968,16 @@ mod tests {
     fn build_report_populates_speakers_and_segments() {
         let diar = crate::diarize::DiarizationResult {
             segments: vec![
-                crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 12.0 },
-                crate::diarize::SpeakerSegment { speaker: "SPEAKER_1".into(), start: 13.0, end: 30.0 },
+                crate::diarize::SpeakerSegment {
+                    speaker: "SPEAKER_0".into(),
+                    start: 0.0,
+                    end: 12.0,
+                },
+                crate::diarize::SpeakerSegment {
+                    speaker: "SPEAKER_1".into(),
+                    start: 13.0,
+                    end: 30.0,
+                },
             ],
             num_speakers: 2,
             from_stems: false,
@@ -979,8 +1018,16 @@ mod tests {
     fn build_report_drops_speaker_when_all_segments_below_min() {
         let diar = crate::diarize::DiarizationResult {
             segments: vec![
-                crate::diarize::SpeakerSegment { speaker: "SPEAKER_0".into(), start: 0.0, end: 15.0 },
-                crate::diarize::SpeakerSegment { speaker: "SPEAKER_1".into(), start: 16.0, end: 20.0 },
+                crate::diarize::SpeakerSegment {
+                    speaker: "SPEAKER_0".into(),
+                    start: 0.0,
+                    end: 15.0,
+                },
+                crate::diarize::SpeakerSegment {
+                    speaker: "SPEAKER_1".into(),
+                    start: 16.0,
+                    end: 20.0,
+                },
             ],
             num_speakers: 2,
             from_stems: false,
@@ -1049,7 +1096,9 @@ mod tests {
     fn build_report_omits_embeddings_when_config_off() {
         let diar = crate::diarize::DiarizationResult {
             segments: vec![crate::diarize::SpeakerSegment {
-                speaker: "SPEAKER_0".into(), start: 0.0, end: 15.0,
+                speaker: "SPEAKER_0".into(),
+                start: 0.0,
+                end: 15.0,
             }],
             num_speakers: 1,
             from_stems: false,

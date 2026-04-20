@@ -3383,11 +3383,8 @@ fn cmd_segment(
         };
         seg::build_report_from_diarization(&result, &build_args)
     } else {
-        let regions = seg::vad_voiced_regions(
-            clipped_pcm,
-            sample_rate,
-            build_args.min_segment_seconds,
-        );
+        let regions =
+            seg::vad_voiced_regions(clipped_pcm, sample_rate, build_args.min_segment_seconds);
         seg::build_report_from_vad(&regions, &build_args)
     };
 

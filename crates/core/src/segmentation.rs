@@ -235,6 +235,48 @@ impl fmt::Display for EmbeddingDecodeError {
 
 impl std::error::Error for EmbeddingDecodeError {}
 
+/// Best-match a query embedding against profiles loaded from zero or more
+/// voices.db paths. Returns `None` when no profile crosses `threshold` or
+/// when no DB could be opened.
+pub fn match_against_voices_dbs(
+    query: &[f32],
+    db_paths: &[PathBuf],
+    threshold: f32,
+) -> Option<VoiceMatch> {
+    let mut best: Option<(String, String, f32)> = None;
+    for path in db_paths {
+        let conn = match crate::voice::open_db_at(path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(db = %path.display(), error = %e, "skipping voices.db (open failed)");
+                continue;
+            }
+        };
+        let profiles = match crate::voice::load_all_with_embeddings(&conn) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(db = %path.display(), error = %e, "skipping voices.db (load failed)");
+                continue;
+            }
+        };
+        for p in profiles {
+            let sim = crate::voice::cosine_similarity(query, &p.embedding);
+            let is_better = best.as_ref().map_or(true, |(_, _, s)| sim > *s);
+            if is_better {
+                best = Some((p.person_slug.clone(), p.name.clone(), sim));
+            }
+        }
+    }
+    match best {
+        Some((slug, name, confidence)) if confidence >= threshold => Some(VoiceMatch {
+            slug,
+            name,
+            confidence,
+        }),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,5 +446,64 @@ mod tests {
         // 3 bytes = can't form a complete f32 (needs 4)
         let bad = base64::engine::general_purpose::STANDARD.encode([0u8, 0, 0]);
         assert!(decode_embedding(&bad).is_err());
+    }
+
+    #[test]
+    fn match_across_empty_dbs_returns_none() {
+        let embedding = vec![1.0_f32; 192];
+        let result = match_against_voices_dbs(&embedding, &[], 0.65);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn match_below_threshold_returns_none() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = crate::voice::open_db_at(tmp.path()).unwrap();
+        let mut emb = vec![0.0_f32; 192];
+        emb[0] = 1.0;
+        let cfg = crate::config::Config::default();
+        crate::voice::save_profile(
+            &db,
+            "alice",
+            "Alice",
+            &emb,
+            "test",
+            crate::voice::model_version(&cfg),
+        )
+        .unwrap();
+
+        let mut query = vec![0.0_f32; 192];
+        query[1] = 1.0; // orthogonal
+        let result = match_against_voices_dbs(&query, &[tmp.path().to_path_buf()], 0.65);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn match_returns_best_across_multiple_dbs() {
+        let tmp_a = tempfile::NamedTempFile::new().unwrap();
+        let tmp_b = tempfile::NamedTempFile::new().unwrap();
+        let db_a = crate::voice::open_db_at(tmp_a.path()).unwrap();
+        let db_b = crate::voice::open_db_at(tmp_b.path()).unwrap();
+
+        let cfg = crate::config::Config::default();
+        let mv = crate::voice::model_version(&cfg);
+
+        let mut alice = vec![0.0_f32; 192];
+        alice[0] = 1.0;
+        crate::voice::save_profile(&db_a, "alice", "Alice", &alice, "test", mv).unwrap();
+
+        let bob = vec![0.1_f32; 192];
+        crate::voice::save_profile(&db_b, "bob", "Bob", &bob, "test", mv).unwrap();
+
+        let query = bob.clone();
+        let result = match_against_voices_dbs(
+            &query,
+            &[tmp_a.path().to_path_buf(), tmp_b.path().to_path_buf()],
+            0.5,
+        )
+        .expect("match");
+        assert_eq!(result.slug, "bob");
+        assert_eq!(result.name, "Bob");
+        assert!(result.confidence > 0.99);
     }
 }

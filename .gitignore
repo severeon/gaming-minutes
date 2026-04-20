@@ -2,6 +2,10 @@
 .claude/*.local.md
 .claude/*.local.json
 .claude/extension-stats/
+.claude/worktrees/
+
+# Diagnostic run log (kept locally, regenerated)
+run.log
 
 # Internal planning/review artifacts (keep local)
 docs/plans/reviews/

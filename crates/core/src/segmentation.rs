@@ -308,6 +308,81 @@ pub fn filter_min_duration(
         .collect()
 }
 
+/// Parse a `[M:SS]`, `[MM:SS]`, or `[H:MM:SS]` / `[HH:MM:SS]` timestamp
+/// prefix into seconds. Returns `None` when the prefix isn't a timestamp.
+fn parse_inline_timestamp(tok: &str) -> Option<f64> {
+    let parts: Vec<&str> = tok.split(':').collect();
+    let seconds: f64 = match parts.len() {
+        2 => {
+            let m: u64 = parts[0].parse().ok()?;
+            let s: f64 = parts[1].parse().ok()?;
+            (m as f64) * 60.0 + s
+        }
+        3 => {
+            let h: u64 = parts[0].parse().ok()?;
+            let m: u64 = parts[1].parse().ok()?;
+            let s: f64 = parts[2].parse().ok()?;
+            (h as f64) * 3600.0 + (m as f64) * 60.0 + s
+        }
+        _ => return None,
+    };
+    Some(seconds)
+}
+
+/// Find the first transcript line whose `[timestamp]` prefix falls in
+/// `[start_sec, end_sec)`. Truncate its body to `char_limit` chars at
+/// a word boundary, appending `…` when truncated.
+pub fn transcript_preview(
+    markdown: &str,
+    start_sec: f64,
+    end_sec: f64,
+    char_limit: usize,
+) -> Option<String> {
+    for line in markdown.lines() {
+        let line = line.trim();
+        if !line.starts_with('[') {
+            continue;
+        }
+        let close = match line.find(']') {
+            Some(c) => c,
+            None => continue,
+        };
+        let ts_tok = &line[1..close];
+        let ts = match parse_inline_timestamp(ts_tok) {
+            Some(t) => t,
+            None => continue,
+        };
+        if ts < start_sec || ts >= end_sec {
+            continue;
+        }
+        let body = line[close + 1..].trim();
+        return Some(truncate_on_word_boundary(body, char_limit));
+    }
+    None
+}
+
+fn truncate_on_word_boundary(s: &str, limit: usize) -> String {
+    if s.chars().count() <= limit {
+        return s.to_string();
+    }
+    let mut acc = String::new();
+    let mut last_space = None;
+    for (idx, ch) in s.chars().enumerate() {
+        if idx >= limit {
+            break;
+        }
+        if ch.is_whitespace() {
+            last_space = Some(acc.len());
+        }
+        acc.push(ch);
+    }
+    if let Some(pos) = last_space {
+        acc.truncate(pos);
+    }
+    acc.push('…');
+    acc
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,6 +637,44 @@ mod tests {
             end: 10.0,
         }];
         assert_eq!(filter_min_duration(&input, 10.0).len(), 1);
+    }
+
+    #[test]
+    fn preview_extracts_first_line_in_range() {
+        let md = "\
+[0:03] I mean here's the thing anything that you would need or want.
+[0:10] I mean uh uh Gul Gulbar
+[0:14] will literally provide it for you.
+";
+        let p = transcript_preview(md, 0.0, 20.0, 120);
+        assert_eq!(
+            p.as_deref(),
+            Some("I mean here's the thing anything that you would need or want.")
+        );
+    }
+
+    #[test]
+    fn preview_truncates_at_word_boundary() {
+        let md = "[0:03] alpha bravo charlie delta echo foxtrot golf hotel india\n";
+        let p = transcript_preview(md, 0.0, 20.0, 20);
+        let p = p.unwrap();
+        assert!(p.len() <= 20 + 3); // allow multibyte ellipsis
+        assert!(p.ends_with('…') || p.ends_with("echo") || p.ends_with("delta"));
+        assert!(!p.contains("foxtr")); // shouldn't split a word mid-way
+    }
+
+    #[test]
+    fn preview_handles_hms_prefix() {
+        let md = "[1:22:07] about three thousand words in\n";
+        let p = transcript_preview(md, 4927.0, 5000.0, 120);
+        assert!(p.as_deref().unwrap().contains("three thousand"));
+    }
+
+    #[test]
+    fn preview_none_when_no_line_in_range() {
+        let md = "[0:03] too early\n[1:00] too late\n";
+        let p = transcript_preview(md, 10.0, 50.0, 120);
+        assert!(p.is_none());
     }
 
     #[test]

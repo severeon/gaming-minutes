@@ -56,8 +56,15 @@ mkdir -p "$APP_RESOURCES"
 cp -f target/release/calendar-events "$APP_RESOURCES/calendar-events"
 
 if [[ "$SIGN_MODE" == "identity" ]]; then
+  echo "=== Pre-signing nested executables with configured identity ==="
+  while IFS= read -r nested_executable; do
+    codesign --force --options runtime --timestamp \
+      --sign "$SIGNING_IDENTITY" \
+      "$nested_executable"
+  done < <(find "$BUILD_APP/Contents/MacOS" -maxdepth 1 -type f \( -perm -100 -o -perm -010 -o -perm -001 \))
+
   echo "=== Signing ${DEV_PRODUCT_NAME}.app with configured identity ==="
-  codesign --force --deep --options runtime \
+  codesign --force --deep --options runtime --timestamp \
     --entitlements tauri/src-tauri/entitlements.plist \
     --sign "$SIGNING_IDENTITY" \
     "$BUILD_APP"

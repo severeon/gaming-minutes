@@ -109,6 +109,7 @@ minutes note "Logan agreed"                       # LLM weights your notes heavi
 ### Process voice memos
 ```bash
 minutes process ~/Downloads/voice-memo.m4a        # Any audio format
+minutes segment ~/Downloads/interview.wav         # Identify speaker regions; emit JSON report with embeddings
 minutes watch                                     # Auto-process new files in inbox
 ```
 

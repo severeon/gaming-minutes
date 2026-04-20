@@ -17,6 +17,8 @@ pub struct Config {
     pub diarization: DiarizationConfig,
     pub summarization: SummarizationConfig,
     pub search: SearchConfig,
+    #[serde(default)]
+    pub segmentation: SegmentationConfig,
     pub daily_notes: DailyNotesConfig,
     pub security: SecurityConfig,
     pub watch: WatchConfig,
@@ -141,6 +143,30 @@ impl Default for GamesClassifierConfig {
             agent_binary: "claude".into(),
             max_budget_usd: 2.0,
             agent_timeout_secs: 300,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SegmentationConfig {
+    pub default_diarize: bool,
+    pub emit_embeddings: bool,
+    pub emit_preview_text: bool,
+    pub min_segment_seconds: f64,
+    pub merge_gap_seconds: f64,
+    pub preview_char_limit: usize,
+}
+
+impl Default for SegmentationConfig {
+    fn default() -> Self {
+        Self {
+            default_diarize: true,
+            emit_embeddings: true,
+            emit_preview_text: true,
+            min_segment_seconds: 10.0,
+            merge_gap_seconds: 0.5,
+            preview_char_limit: 120,
         }
     }
 }
@@ -777,6 +803,7 @@ impl Default for Config {
             diarization: DiarizationConfig::default(),
             summarization: SummarizationConfig::default(),
             search: SearchConfig::default(),
+            segmentation: SegmentationConfig::default(),
             daily_notes: DailyNotesConfig::default(),
             security: SecurityConfig::default(),
             watch: WatchConfig::default(),
@@ -1795,5 +1822,34 @@ language = "fr"
 
         let config = Config::load_from(&config_path);
         assert_eq!(config.summarization.language, "fr");
+    }
+
+    #[test]
+    fn segmentation_config_has_sensible_defaults() {
+        let cfg = SegmentationConfig::default();
+        assert!(cfg.default_diarize);
+        assert!(cfg.emit_embeddings);
+        assert!(cfg.emit_preview_text);
+        assert!((cfg.min_segment_seconds - 10.0).abs() < f64::EPSILON);
+        assert!((cfg.merge_gap_seconds - 0.5).abs() < f64::EPSILON);
+        assert_eq!(cfg.preview_char_limit, 120);
+    }
+
+    #[test]
+    fn segmentation_stanza_roundtrips_through_toml() {
+        let toml_src = r#"
+[segmentation]
+default_diarize = false
+emit_embeddings = false
+min_segment_seconds = 5.0
+merge_gap_seconds = 1.0
+preview_char_limit = 80
+"#;
+        let parsed: Config = toml::from_str(toml_src).expect("parse");
+        assert!(!parsed.segmentation.default_diarize);
+        assert!(!parsed.segmentation.emit_embeddings);
+        assert!(parsed.segmentation.emit_preview_text); // not specified → default
+        assert!((parsed.segmentation.min_segment_seconds - 5.0).abs() < f64::EPSILON);
+        assert_eq!(parsed.segmentation.preview_char_limit, 80);
     }
 }

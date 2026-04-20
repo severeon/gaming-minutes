@@ -187,6 +187,54 @@ pub struct Stats {
     pub unmatched_segments: u32,
 }
 
+use base64::Engine as _;
+
+/// Encode an f32 embedding vector as base64-encoded little-endian
+/// f32 bytes. Output is `len * 4` bytes before base64 wrapping.
+pub fn encode_embedding(embedding: &[f32]) -> String {
+    let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+    base64::engine::general_purpose::STANDARD.encode(&bytes)
+}
+
+/// Decode a base64 f32 embedding string back into a Vec<f32>.
+/// Errors if the decoded byte length isn't a multiple of 4.
+pub fn decode_embedding(encoded: &str) -> Result<Vec<f32>, EmbeddingDecodeError> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| EmbeddingDecodeError::Base64(e.to_string()))?;
+    if bytes.len() % 4 != 0 {
+        return Err(EmbeddingDecodeError::TruncatedFloat(bytes.len()));
+    }
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
+}
+
+/// Errors returned by [`decode_embedding`].
+#[derive(Debug, Clone)]
+pub enum EmbeddingDecodeError {
+    /// The input was not valid base64.
+    Base64(String),
+    /// The decoded byte length is not a multiple of 4 (needed for f32).
+    TruncatedFloat(usize),
+}
+
+impl fmt::Display for EmbeddingDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Base64(s) => write!(f, "base64 decode failed: {}", s),
+            Self::TruncatedFloat(n) => write!(
+                f,
+                "embedding byte length {} is not a multiple of 4",
+                n
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EmbeddingDecodeError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,5 +386,23 @@ mod tests {
             "speaker_label should be omitted, got: {}",
             json
         );
+    }
+
+    #[test]
+    fn embedding_base64_roundtrips() {
+        let input: Vec<f32> = vec![0.1, -0.25, 1.0, 0.0, 3.14159];
+        let encoded = encode_embedding(&input);
+        let decoded = decode_embedding(&encoded).unwrap();
+        assert_eq!(decoded.len(), input.len());
+        for (a, b) in input.iter().zip(decoded.iter()) {
+            assert!((a - b).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn embedding_base64_rejects_truncated_input() {
+        // 3 bytes = can't form a complete f32 (needs 4)
+        let bad = base64::engine::general_purpose::STANDARD.encode([0u8, 0, 0]);
+        assert!(decode_embedding(&bad).is_err());
     }
 }

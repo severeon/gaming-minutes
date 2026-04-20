@@ -40,6 +40,46 @@ pub struct DiarizationResult {
 
 type EnergyWindow = (f64, f32);
 type StemEnergyWindows = (Vec<EnergyWindow>, Vec<EnergyWindow>);
+// ── Diarization availability diagnostics ─────────────────────
+
+/// High-level status describing whether diarization is able to run on
+/// this build + config. Surfaced so CLIs and tooling can generate
+/// targeted error messages instead of guessing from a `None` return.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiarizeStatus {
+    /// Diarization is ready to run.
+    Ok,
+    /// `config.diarization.engine == "none"` — disabled by user config.
+    EngineNone,
+    /// The `diarize` feature flag is not compiled into this binary.
+    FeatureDisabled,
+    /// The `diarize` feature IS compiled, but the ONNX model files were
+    /// not found on disk. Run `minutes setup --diarization` to fetch.
+    ModelMissing,
+    /// Current platform can't run pyannote-rs (e.g. Windows, where the
+    /// pyannote-rs dependency stubs out).
+    PlatformUnavailable,
+}
+
+/// Diagnose whether diarization is available for this build + config.
+///
+/// Called by CLIs that want targeted error messages instead of probing
+/// `diarize` directly and observing a `None` return.
+pub fn diagnose_diarize(config: &Config) -> DiarizeStatus {
+    if config.diarization.engine == "none" {
+        return DiarizeStatus::EngineNone;
+    }
+    if !cfg!(unix) {
+        return DiarizeStatus::PlatformUnavailable;
+    }
+    if !cfg!(feature = "diarize") {
+        return DiarizeStatus::FeatureDisabled;
+    }
+    if !models_installed(config) {
+        return DiarizeStatus::ModelMissing;
+    }
+    DiarizeStatus::Ok
+}
 
 // ── Speaker attribution ──────────────────────────────────────
 
@@ -2326,6 +2366,36 @@ mod tests {
         let parsed: SpeakerAttribution = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(parsed.confidence, Confidence::High);
         assert_eq!(parsed.source, AttributionSource::Manual);
+    }
+
+    #[test]
+    fn diagnose_engine_none() {
+        let mut cfg = Config::default();
+        cfg.diarization.engine = "none".into();
+        assert_eq!(diagnose_diarize(&cfg), DiarizeStatus::EngineNone);
+    }
+
+    #[test]
+    fn diagnose_reports_model_missing_when_files_absent() {
+        // With default config but a model_path that doesn't exist, and
+        // running on a unix build with the `diarize` feature enabled,
+        // we expect ModelMissing (or FeatureDisabled if the feature
+        // isn't on, or PlatformUnavailable on non-unix). Accept any failure variant.
+        let mut cfg = Config::default();
+        cfg.diarization.engine = "pyannote".into();
+        cfg.diarization.model_path =
+            std::path::PathBuf::from("/nonexistent/path/for/test/segmentation.onnx");
+        let status = diagnose_diarize(&cfg);
+        assert!(
+            matches!(
+                status,
+                DiarizeStatus::ModelMissing
+                    | DiarizeStatus::FeatureDisabled
+                    | DiarizeStatus::PlatformUnavailable
+            ),
+            "expected a failure-path variant, got {:?}",
+            status
+        );
     }
 
     #[test]

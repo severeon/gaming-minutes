@@ -3362,18 +3362,46 @@ fn cmd_segment(
     };
 
     let report = if diarize {
-        let Some(result) = minutes_core::diarize::diarize(&audio, config) else {
-            if !cfg!(unix) {
+        use minutes_core::diarize::DiarizeStatus;
+        match minutes_core::diarize::diagnose_diarize(config) {
+            DiarizeStatus::Ok => {}
+            DiarizeStatus::EngineNone => {
                 eprintln!(
-                    "segment: diarization unavailable on this platform; retry with --no-diarize"
-                );
-                std::process::exit(4);
-            } else {
-                eprintln!(
-                    "segment: diarization failed — models may be missing. run: minutes setup --diarization"
+                    "segment: diarization engine is set to 'none' in config.toml; \
+                     retry with --no-diarize or set [diarization].engine = \"pyannote\""
                 );
                 std::process::exit(3);
             }
+            DiarizeStatus::FeatureDisabled => {
+                eprintln!(
+                    "segment: this binary was built without the 'diarize' feature; \
+                     rebuild with: cargo build --release -p minutes-cli --features diarize"
+                );
+                std::process::exit(3);
+            }
+            DiarizeStatus::ModelMissing => {
+                eprintln!(
+                    "segment: diarization models are not installed; \
+                     run: minutes setup --diarization"
+                );
+                std::process::exit(3);
+            }
+            DiarizeStatus::PlatformUnavailable => {
+                eprintln!(
+                    "segment: diarization is not available on this platform; \
+                     retry with --no-diarize"
+                );
+                std::process::exit(4);
+            }
+        }
+        let Some(result) = minutes_core::diarize::diarize(&audio, config) else {
+            // diagnose said Ok but diarize still returned None — likely a
+            // model inference failure. Treat as exit 3 with a generic message.
+            eprintln!(
+                "segment: diarization failed during inference. \
+                 check logs with: minutes logs"
+            );
+            std::process::exit(3);
         };
         seg::build_report_from_diarization(&result, &build_args)
     } else {

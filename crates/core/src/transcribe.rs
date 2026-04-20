@@ -1593,7 +1593,7 @@ fn transcribe_with_whisper(
 /// because symphonia's AAC decoder produces samples that cause whisper to
 /// hallucinate on non-English audio (issue #21). Falls back to symphonia
 /// when ffmpeg is not installed.
-fn load_audio_samples(path: &Path) -> Result<Vec<f32>, TranscribeError> {
+pub fn load_audio_samples(path: &Path) -> Result<Vec<f32>, TranscribeError> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())

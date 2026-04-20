@@ -413,6 +413,48 @@ enum Commands {
         format: String,
     },
 
+    /// Identify single-speaker regions ≥ min-secs in an audio file and emit
+    /// a JSON segmentation report for downstream enrollment/editing tools.
+    Segment {
+        /// Path to the audio file (WAV, or any format ffmpeg can decode).
+        audio: PathBuf,
+
+        /// Enable diarization (default). Use --no-diarize to downgrade to
+        /// energy-VAD voice-activity regions.
+        #[arg(long, overrides_with = "no_diarize")]
+        diarize: bool,
+
+        #[arg(long, overrides_with = "diarize")]
+        no_diarize: bool,
+
+        /// Minimum segment duration in seconds. Defaults to config
+        /// [segmentation].min_segment_seconds, then 10.0.
+        #[arg(long)]
+        min_secs: Option<f64>,
+
+        /// Clip audio to start at HH:MM:SS[.sss] before segmenting.
+        #[arg(long)]
+        start: Option<String>,
+
+        /// Clip audio to end at HH:MM:SS[.sss] before segmenting.
+        #[arg(long)]
+        end: Option<String>,
+
+        /// Path to a voices.db to match against. Repeatable. Default:
+        /// ~/.minutes/voices.db.
+        #[arg(long)]
+        voices: Vec<PathBuf>,
+
+        /// Path to an existing transcript markdown for preview-text
+        /// attachment. Auto-detected as <basename>.md if omitted.
+        #[arg(long)]
+        use_transcript: Option<PathBuf>,
+
+        /// Write JSON to this path. Omit to write to stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
     /// Show open action items across all meetings
     Actions {
         /// Filter by assignee name
@@ -1317,6 +1359,28 @@ fn main() -> Result<()> {
             }
             result
         }
+        Commands::Segment {
+            audio,
+            diarize,
+            no_diarize,
+            min_secs,
+            start,
+            end,
+            voices,
+            use_transcript,
+            output,
+        } => cmd_segment(
+            audio,
+            diarize,
+            no_diarize,
+            min_secs,
+            start,
+            end,
+            voices,
+            use_transcript,
+            output,
+            &config,
+        ),
         Commands::Games { action } => cmd_games(action, &config),
         Commands::Watch { dir, language } => {
             if let Some(lang) = language {
@@ -3164,6 +3228,186 @@ fn cmd_clean(meeting: &str, apply: bool, config: &Config) -> Result<()> {
         eprintln!("Run with --apply to fix them.");
     }
 
+    Ok(())
+}
+
+/// Identify single-speaker regions in an audio file and emit a JSON segmentation report.
+///
+/// Uses diarization (pyannote-rs) by default, or energy-VAD if `--no-diarize` is
+/// passed. Exit codes: 2 = bad audio / bad range, 3 = diarize model missing,
+/// 4 = diarize unavailable on this platform.
+#[allow(clippy::too_many_arguments)]
+fn cmd_segment(
+    audio: PathBuf,
+    diarize_flag: bool,
+    no_diarize_flag: bool,
+    min_secs: Option<f64>,
+    start: Option<String>,
+    end: Option<String>,
+    voices: Vec<PathBuf>,
+    use_transcript: Option<PathBuf>,
+    output: Option<PathBuf>,
+    config: &minutes_core::config::Config,
+) -> Result<()> {
+    use minutes_core::segmentation as seg;
+    use std::io::Write;
+
+    // Resolve flags vs config defaults.
+    let diarize = if diarize_flag {
+        true
+    } else if no_diarize_flag {
+        false
+    } else {
+        config.segmentation.default_diarize
+    };
+    let min_segment_seconds = min_secs.unwrap_or(config.segmentation.min_segment_seconds);
+    let merge_gap_seconds = config.segmentation.merge_gap_seconds;
+
+    // Audio presence.
+    if !audio.exists() {
+        eprintln!("segment: audio file not found: {}", audio.display());
+        std::process::exit(2);
+    }
+
+    // Load audio → f32 16kHz mono PCM.
+    let pcm = match minutes_core::transcribe::load_audio_samples(&audio) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("segment: failed to decode audio: {}", e);
+            std::process::exit(2);
+        }
+    };
+    let sample_rate: u32 = 16_000;
+    let audio_duration_seconds = pcm.len() as f64 / sample_rate as f64;
+
+    // Resolve start/end.
+    let start_sec = match start.as_deref() {
+        Some(s) => match seg::parse_timestamp(s) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("segment: {}", e);
+                std::process::exit(2);
+            }
+        },
+        None => 0.0,
+    };
+    let end_sec = match end.as_deref() {
+        Some(s) => match seg::parse_timestamp(s) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("segment: {}", e);
+                std::process::exit(2);
+            }
+        },
+        None => audio_duration_seconds,
+    };
+    if start_sec >= end_sec || end_sec > audio_duration_seconds + 0.001 {
+        eprintln!(
+            "segment: invalid range [{}, {}] for audio duration {:.3}s",
+            start_sec, end_sec, audio_duration_seconds
+        );
+        std::process::exit(2);
+    }
+
+    // Clip PCM.
+    let start_idx = (start_sec * sample_rate as f64) as usize;
+    let end_idx = ((end_sec * sample_rate as f64) as usize).min(pcm.len());
+    let clipped_pcm = &pcm[start_idx..end_idx];
+
+    // Resolve voices.
+    let voices_paths = if voices.is_empty() {
+        vec![minutes_core::voice::db_path()]
+    } else {
+        voices
+    };
+
+    // Resolve transcript path (auto-detect if not provided).
+    let transcript_path: Option<PathBuf> = use_transcript.or_else(|| {
+        let candidate = audio.with_extension("md");
+        if candidate.exists() {
+            Some(candidate)
+        } else {
+            None
+        }
+    });
+    let transcript_markdown = transcript_path
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok());
+
+    let start_str = seg::format_timestamp(start_sec)
+        .chars()
+        .take(8)
+        .collect::<String>();
+    let end_str = seg::format_timestamp(end_sec)
+        .chars()
+        .take(8)
+        .collect::<String>();
+
+    let model_versions = seg::ModelVersions {
+        diarization: config.diarization.engine.clone(),
+        embedding: minutes_core::voice::model_version(config).to_string(),
+        whisper: config.transcription.model.clone(),
+    };
+
+    let build_args = seg::BuildArgs {
+        audio_path: audio.clone(),
+        transcript_path,
+        audio_duration_seconds: (end_sec - start_sec),
+        diarize,
+        min_segment_seconds,
+        merge_gap_seconds,
+        start_str,
+        end_str,
+        voices_paths,
+        emit_embeddings: config.segmentation.emit_embeddings,
+        emit_preview_text: config.segmentation.emit_preview_text,
+        preview_char_limit: config.segmentation.preview_char_limit,
+        transcript_markdown,
+        model_versions,
+        voice_match_threshold: config.voice.match_threshold,
+    };
+
+    let report = if diarize {
+        let Some(result) = minutes_core::diarize::diarize(&audio, config) else {
+            if !cfg!(unix) {
+                eprintln!(
+                    "segment: diarization unavailable on this platform; retry with --no-diarize"
+                );
+                std::process::exit(4);
+            } else {
+                eprintln!(
+                    "segment: diarization failed — models may be missing. run: minutes setup --diarization"
+                );
+                std::process::exit(3);
+            }
+        };
+        seg::build_report_from_diarization(&result, &build_args)
+    } else {
+        let regions = seg::vad_voiced_regions(
+            clipped_pcm,
+            sample_rate,
+            build_args.min_segment_seconds,
+        );
+        seg::build_report_from_vad(&regions, &build_args)
+    };
+
+    let json = serde_json::to_string_pretty(&report)
+        .map_err(|e| anyhow::anyhow!("serialize report: {}", e))?;
+    match output {
+        Some(path) => {
+            std::fs::write(&path, json)?;
+            eprintln!(
+                "segment: wrote {} segments to {}",
+                report.stats.segment_count,
+                path.display()
+            );
+        }
+        None => {
+            let stdout = std::io::stdout();
+            let mut lock = stdout.lock();
+            writeln!(lock, "{}", json)?;
+        }
+    }
     Ok(())
 }
 

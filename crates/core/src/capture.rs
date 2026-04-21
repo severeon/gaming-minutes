@@ -470,7 +470,7 @@ fn select_device_with_override(
 
 fn resolve_capture_plan(config: &Config) -> Result<CapturePlan, CaptureError> {
     let host = cached_default_host();
-    resolve_capture_plan_with_host(&host, config)
+    resolve_capture_plan_with_host(host, config)
 }
 
 fn resolve_capture_plan_with_host(
@@ -1252,7 +1252,7 @@ pub fn record_to_wav(
         #[cfg(feature = "streaming")]
         CapturePlan::Dual(_) => None,
     };
-    let device = select_input_device(&host, device_override)?;
+    let device = select_input_device(host, device_override)?;
 
     let device_name = device
         .description()
@@ -1406,7 +1406,7 @@ pub fn record_to_wav(
 
             // Try reconnecting (with one retry after 1s)
             let reconnected = try_reconnect(
-                &host,
+                host,
                 device_override,
                 &writer,
                 &stop_flag,
@@ -1418,7 +1418,7 @@ pub fn record_to_wav(
                 tracing::info!("reconnect failed, retrying in 1s...");
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 try_reconnect(
-                    &host,
+                    host,
                     device_override,
                     &writer,
                     &stop_flag,
@@ -1981,7 +1981,7 @@ pub fn selected_input_device_name(config: &Config) -> Result<String, CaptureErro
     use cpal::traits::DeviceTrait;
 
     let host = cached_default_host();
-    let device = select_input_device(&host, config.recording.device.as_deref())?;
+    let device = select_input_device(host, config.recording.device.as_deref())?;
     device
         .description()
         .map(|d| d.name().to_string())

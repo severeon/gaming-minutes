@@ -192,7 +192,7 @@ impl AudioStream {
     /// Chunks arrive at ~10Hz (100ms each at 16kHz = 1600 samples).
     pub fn start(device_override: Option<&str>) -> Result<Self, CaptureError> {
         let host = crate::capture::cached_default_host();
-        let device = crate::capture::select_input_device(&host, device_override)?;
+        let device = crate::capture::select_input_device(host, device_override)?;
 
         // Bounded channel: 64 chunks = ~6.4 seconds of buffered audio.
         let (tx, rx): (Sender<AudioChunk>, Receiver<AudioChunk>) = bounded(64);

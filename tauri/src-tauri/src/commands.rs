@@ -1686,17 +1686,12 @@ fn start_native_call_recording(
     };
     let output_path = session.output_path().to_path_buf();
     let recording_started_at = chrono::Local::now();
-    let context_session_id = match minutes_core::context_store::start_capture_session(
+    let context_session_id = minutes_core::desktop_context::maybe_start_capture_session(
+        &config.desktop_context,
         mode,
         requested_title.clone(),
         recording_started_at,
-    ) {
-        Ok(session) => Some(session.id),
-        Err(error) => {
-            tracing::warn!(error = %error, mode = ?mode, "failed to create context session for native recording");
-            None
-        }
-    };
+    );
 
     starting.store(false, Ordering::Relaxed);
     recording.store(true, Ordering::Relaxed);
@@ -1716,11 +1711,10 @@ fn start_native_call_recording(
         output_path.display()
     );
 
-    #[cfg(target_os = "macos")]
     let _desktop_context_collector = context_session_id.as_ref().and_then(|session_id| {
-        match crate::desktop_context::DesktopContextCollector::start(
+        match minutes_core::desktop_context::DesktopContextCollector::start(
             session_id.clone(),
-            crate::desktop_context::DesktopContextSessionKind::Recording,
+            minutes_core::desktop_context::DesktopContextSessionKind::Recording,
             config.desktop_context.clone(),
         ) {
             Ok(collector) => Some(collector),
@@ -3455,17 +3449,12 @@ pub fn start_recording(
     stop_flag.store(false, Ordering::Relaxed);
     sync_processing_indicator(&processing, &processing_stage);
     set_latest_output(&latest_output, None);
-    let context_session_id = match minutes_core::context_store::start_capture_session(
+    let context_session_id = minutes_core::desktop_context::maybe_start_capture_session(
+        &config.desktop_context,
         mode,
         requested_title.clone(),
         recording_started_at,
-    ) {
-        Ok(session) => Some(session.id),
-        Err(error) => {
-            tracing::warn!(error = %error, mode = ?mode, "failed to create context session for recording");
-            None
-        }
-    };
+    );
     minutes_core::pid::write_recording_metadata_with_context(mode, context_session_id.as_deref())
         .ok();
     crate::update_tray_state(&app_handle, true);
@@ -3479,11 +3468,10 @@ pub fn start_recording(
         update_assistant_live_context(&workspace, true);
     }
 
-    #[cfg(target_os = "macos")]
     let _desktop_context_collector = context_session_id.as_ref().and_then(|session_id| {
-        match crate::desktop_context::DesktopContextCollector::start(
+        match minutes_core::desktop_context::DesktopContextCollector::start(
             session_id.clone(),
-            crate::desktop_context::DesktopContextSessionKind::Recording,
+            minutes_core::desktop_context::DesktopContextSessionKind::Recording,
             config.desktop_context.clone(),
         ) {
             Ok(collector) => Some(collector),
@@ -6364,6 +6352,10 @@ mod tests {
         // screen_context.keep_after_summary controls post-summary screenshot
         // retention. Low-traffic; TOML-only is fine.
         ("screen_context", "keep_after_summary"),
+        // Desktop-context domain policy is intentionally deferred until the
+        // browser capture path graduates beyond window-title-only context.
+        ("desktop_context", "allowed_domains"),
+        ("desktop_context", "denied_domains"),
         // Parakeet sidecar is beta / opt-in. No UI until the sidecar path is
         // out of beta.
         ("transcription", "parakeet_sidecar_enabled"),
@@ -6589,6 +6581,28 @@ mod tests {
                 cursor = abs + anchor.len();
             }
         }
+
+        // Some UI surfaces intentionally route repeated settings through
+        // helper wrappers rather than spelling out a literal invoke call for
+        // every key. Keep this allowlist narrow and explicit so it still
+        // proves a real caller exists, rather than downgrading the guard
+        // into a generic string search.
+        if section == "desktop_context" {
+            let wrapper_anchors = ["wireDesktopContextToggle(", "wireDesktopContextList("];
+            for anchor in &wrapper_anchors {
+                let mut cursor = 0;
+                while let Some(offset) = haystack[cursor..].find(anchor) {
+                    let abs = cursor + offset;
+                    let window_end = (abs + 180).min(haystack.len());
+                    let window = &haystack[abs..window_end];
+                    if key_patterns.iter().any(|pattern| window.contains(pattern)) {
+                        return true;
+                    }
+                    cursor = abs + anchor.len();
+                }
+            }
+        }
+
         false
     }
 
@@ -7697,21 +7711,16 @@ fn run_live_session(app: tauri::AppHandle, active: Arc<AtomicBool>, stop_flag: A
         update_assistant_live_context(&workspace, true);
     }
 
-    let live_context_session_id = match minutes_core::context_store::start_live_transcript_session(
-        chrono::Local::now(),
-    ) {
-        Ok(session) => Some(session.id),
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to create context session for live transcript");
-            None
-        }
-    };
+    let live_context_session_id =
+        minutes_core::desktop_context::maybe_start_live_transcript_session(
+            &config.desktop_context,
+            chrono::Local::now(),
+        );
 
-    #[cfg(target_os = "macos")]
     let _desktop_context_collector = live_context_session_id.as_ref().and_then(|session_id| {
-        match crate::desktop_context::DesktopContextCollector::start(
+        match minutes_core::desktop_context::DesktopContextCollector::start(
             session_id.clone(),
-            crate::desktop_context::DesktopContextSessionKind::LiveTranscript,
+            minutes_core::desktop_context::DesktopContextSessionKind::LiveTranscript,
             config.desktop_context.clone(),
         ) {
             Ok(collector) => Some(collector),

@@ -190,3 +190,17 @@ contract explicit:
 
 That combination is what keeps a useful macOS-only slice from accidentally
 breaking Windows builds or local build scripts.
+
+## Desktop Context Runtime Validation
+
+Compile/build coverage for desktop-context parity now runs in CI on macOS,
+Windows, and Ubuntu, but runtime truth still needs real desktop sessions.
+
+Use [DESKTOP-CONTEXT-RUNTIME-CHECKLIST.md](./DESKTOP-CONTEXT-RUNTIME-CHECKLIST.md)
+when validating:
+
+- Windows foreground app/window-title capture on an actual Windows desktop
+- Linux AT-SPI-first behavior on an actual Linux desktop session
+
+Do not treat a headless Linux environment or Codespace as proof that the Linux
+collector works in real desktop conditions.

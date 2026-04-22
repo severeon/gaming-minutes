@@ -961,12 +961,12 @@ brew upgrade --cask silverstein/tap/minutes
 brew upgrade silverstein/tap/minutes
 
 # From source (CLI)
-git pull && cargo install --path crates/cli
+git pull && cargo install --path crates/cli --features parakeet,metal
 
 # From source (desktop app)
 git pull
 export CXXFLAGS="-I$(xcrun --show-sdk-path)/usr/include/c++/v1"
-cargo tauri build --bundles app
+cargo tauri build --bundles app --features parakeet,metal
 # Then replace /Applications/Minutes.app with the new build from
 # target/release/bundle/macos/Minutes.app
 
@@ -974,6 +974,8 @@ cargo tauri build --bundles app
 # Download the latest .dmg from https://github.com/silverstein/minutes/releases
 # and drag Minutes.app to /Applications, replacing the old version
 ```
+
+For local source builds, keep the CLI and desktop app on the same transcription feature set. The repo build scripts now default to `MINUTES_BUILD_FEATURES=parakeet,metal`; override that env var only if you intentionally want a narrower build flavor.
 
 Check your current version with `minutes --version` (CLI) or the Settings gear in the desktop app.
 

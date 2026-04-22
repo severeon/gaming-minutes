@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 export CXXFLAGS="${CXXFLAGS:-"-I$(xcrun --show-sdk-path)/usr/include/c++/v1"}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
+MINUTES_BUILD_FEATURES="${MINUTES_BUILD_FEATURES:-parakeet,metal}"
 
 DEV_CONFIG="tauri/src-tauri/tauri.dev.conf.json"
 DEV_PRODUCT_NAME="Minutes Dev"
@@ -39,13 +40,13 @@ if [[ -n "$SIGNING_IDENTITY" ]]; then
 fi
 
 echo "=== Building CLI (release) ==="
-cargo build --release -p minutes-cli --features metal
+cargo build --release -p minutes-cli --features "$MINUTES_BUILD_FEATURES"
 
 echo "=== Building ${DEV_PRODUCT_NAME}.app ==="
 # The calendar-events Swift helper is compiled and staged into
 # tauri/src-tauri/resources/ by tauri/src-tauri/build.rs, and Tauri bundles it
 # into the .app automatically via tauri.conf.json.
-cargo tauri build --bundles app --config "$DEV_CONFIG" --features parakeet,metal --no-sign
+cargo tauri build --bundles app --config "$DEV_CONFIG" --features "$MINUTES_BUILD_FEATURES" --no-sign
 
 if [[ "$SIGN_MODE" == "identity" ]]; then
   echo "=== Pre-signing nested executables with configured identity ==="
@@ -82,6 +83,7 @@ set -e
 echo ""
 echo "Installed app: $INSTALL_APP"
 echo "Bundle id: com.useminutes.desktop.dev"
+echo "Build features: $MINUTES_BUILD_FEATURES"
 echo "Signing mode: $SIGN_MODE"
 echo "Hotkey diagnostic exit code: $DIAG_EXIT"
 echo "  0 = CGEventTap started successfully"

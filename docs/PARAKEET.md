@@ -326,6 +326,13 @@ TAURI_FEATURES="parakeet" cargo tauri build --bundles app
 cargo build --release -p minutes-cli --features parakeet
 ```
 
+For local macOS builds in this repo, prefer the helper scripts because they keep the CLI and desktop app aligned on the same feature set:
+
+```bash
+MINUTES_BUILD_FEATURES=parakeet,metal ./scripts/build.sh
+MINUTES_BUILD_FEATURES=parakeet,metal ./scripts/install-dev-app.sh
+```
+
 Note: The `parakeet` feature is opt-in and not included in the default build.
 Whisper is always compiled in (it's the default feature). Both engines can coexist
 in the same binary — the config file selects the offline/batch path plus both

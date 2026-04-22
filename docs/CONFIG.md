@@ -215,6 +215,9 @@ This section is the policy layer for meeting-adjacent desktop context:
 - app filters are enforced today
 - domain lists are forward-compatible policy hooks for future browser URL enrichment
 
+For real desktop validation of the Windows and Linux collectors, use
+[DESKTOP-CONTEXT-RUNTIME-CHECKLIST.md](./DESKTOP-CONTEXT-RUNTIME-CHECKLIST.md).
+
 ### `[search]` — search backend
 
 | key | default | meaning |

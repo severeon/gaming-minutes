@@ -1,74 +1,50 @@
 # minutes — full agent reference
 
 > Generated file. Do not edit by hand.
-> Source: manifest.json + crates/mcp/src/index.ts
-> Last generated: 2026-04-14
+> Source: manifest.json + crates/mcp/src/index.ts + site/lib/skills-catalog.json
+> Last generated: 2026-04-22
 
 ## Product
 
-Minutes is conversation memory for AI. Record, transcribe, search, and query every meeting and voice memo, all processed locally on your machine. Works with any MCP client: Claude Desktop, Claude Code, Codex, Gemini CLI, and more.
+Minutes is an open-source meeting corpus you own. Record, transcribe, search, and query every meeting and voice memo on your own disk. No cloud, no vendor to outlive. Output is structured markdown in `~/meetings/` that Claude Desktop, Claude Code, Codex, Gemini CLI, Cursor, OpenCode, and any MCP-compatible client read from the same folder, without a proprietary SDK or API key. Ten years from now, `grep` still works on your corpus.
 
-26 tools • 6 resources • Interactive MCP App dashboard • 6 prompt templates
+26 tools • 6 resources • Interactive MCP App dashboard • Prompt templates
 
-**Setup:** `npx minutes-mcp` is all you need to start. Search, browsing, and the dashboard work immediately with zero setup. For recording and transcription, the server auto-installs the CLI binary on first use (or install manually via `brew install silverstein/tap/minutes` or `cargo install minutes-cli`). Then run `minutes setup --model tiny` for the smallest Whisper path, or `minutes setup --parakeet` for the multilingual Parakeet default introduced in v0.12.0.
+**What's new in 0.13.3:**
+• Stem diarization has an escape hatch. Open-speaker setups (Studio Display, laptop mic, USB desk mic near speakers) were collapsing Zoom calls to a single SPEAKER_0 because the mic acoustically picks up system audio. The correlation gate that triggers the collapse is now configurable via `[diarization] stem_correlation_threshold` in `config.toml`. Default is 0.85 (unchanged). Set to 1.0 to disable the collapse entirely. Reported by @athal7 in issue #157.
+• `stop_when_call_ends` actually auto-stops now. The countdown shipped in 0.13.0 was armed correctly but a state race could orphan it before it fired. The countdown thread now owns the lifecycle exclusively. Re-detecting the same call mid-countdown cancels instead of firing. Reported by @athal7 in issue #129.
+• Linux PipeWire recording no longer segfaults. A double host init/teardown inside the capture plan was tripping an abort. Fixed the lifetime so the host stays live for the recording session.
+• `npx minutes-mcp` launches cleanly from npm shims. OpenCode, Cursor, and any `.bin` shim caller now connect without an early exit. Entrypoint guard compares canonical realpaths instead of raw path strings.
+• `minutes setup --demo` installs a bundled fixture corpus (two realistic meetings) so new users see search, graph, and summarize surfaces immediately without recording anything first. Useful for demos, reviewer onboarding, and MCP dashboard preview.
+• Recall (the multi-agent CLI launcher) got three fixes: per-agent scoping of approval-bypass flags, OpenCode agent settings support, and assistant workspace sync to generated portable skill trees.
+• Frontmatter adds opt-in `authority` and `supersedes` fields on Decision entries for teams that want to mark one decision as overriding another.
 
-**What changed in v0.12.0:**
-• Parakeet is multilingual by default (`tdt-600m`) instead of English-only
-• Native Parakeet VAD replaces the old fixed 45-second slices when weights are present
-• Folder watcher batches Parakeet memo bursts
-• Optional fp16 and graph-derived vocabulary boosts are available for tuning
+**Rolled up from 0.13.2 (three days ago):**
+• Minutes-local mic-mute toggle for passive attendance (webinars, all-hands, panels). Tray menu, `minutes record --mute-mic`, `minutes mic-toggle`, or `MicMuted` / `MicUnmuted` events. Only meaningful during dual-source capture. Thanks to @maxtacu for the request in discussion #146.
+• Claude Desktop extension install works on Claude Desktop 1.3109.0 and later. Bundle is clean of path-traversal-tripping filenames and `check_mcpb_bundle` guards future regressions. File-based crash tracer at `~/.minutes/logs/mcp-crash.log` catches silent exits when a host swallows stderr.
 
-**Record & Transcribe:**
+**Rolled up from 0.13.0 (four days ago):**
+• Settings UX: toggle rows no longer drift out of sync with what you clicked. Command palette shortcut has a real UI row.
+• Identity setup: name, emails, and name variants so Minutes recognizes you across calendars, frontmatter, and conversation memory.
+• Call-aware recording: smarter Teams web detection across Arc, Safari, and Chrome. `stop_when_call_ends` exposed in the desktop UI.
+• Capture resilience: pinned-device capture more stable on Linux, better handling of decorated or ambiguous device labels.
+• Autoresearch tooling: compare decode-hint eval runs and list recent research output from the CLI.
+
+**Setup:** `npx minutes-mcp` gets you search, browsing, and the dashboard right away. For recording and transcription, Minutes can auto-install the CLI on first use, or you can install it yourself with `brew install silverstein/tap/minutes` or `cargo install minutes-cli`, then run `minutes setup --model tiny` or `minutes setup --parakeet`. Want to preview the full experience without recording? Run `minutes setup --demo`.
+
+**What Minutes already gives you:**
+• Filesystem-as-API: meetings land as YAML-frontmatter markdown in `~/meetings/`. Every agent reads the same source of truth. No vendor lock-in.
 • Start/stop live meeting recordings
 • Process audio files (WAV, M4A, MP3, OGG)
-• Local transcription. Nothing leaves your machine.
+• Local transcription with Whisper or Parakeet. Nothing leaves your machine.
 • Speaker diarization, native, no Python required
-• Language selection for similar-sounding languages (e.g. Urdu vs Hindi)
-• Dictation mode: speak to clipboard and daily notes
-• Live transcript with delta reads for mid-meeting AI coaching
-• Safety guard auto-stops forgotten recordings after prolonged silence, time cap, or low disk
+• Dictation mode for clipboard and daily notes
+• Live transcript reads for mid-meeting AI coaching
+• Full-text search across every meeting and memo
+• Decisions, commitments, questions, and relationship context across meetings
+• An interactive MCP App dashboard inside Claude conversations
 
-**Search & Query:**
-• Full-text search across all meetings
-• Find open action items by assignee
-• Track decisions and commitments
-• Cross-meeting topic research
-
-**Relationship Intelligence:**
-• Person profiles across all meetings
-• Relationship map with losing-touch alerts
-• Commitment tracking by person
-• Consistency reports flagging conflicting decisions
-
-**Speaker Identification:**
-• Voice enrollment and speaker profiles
-• Confirm or correct speaker attribution in transcripts
-
-**Interactive Dashboard (MCP App):**
-• Visual meeting browser, detail viewer, and people dashboard
-• Renders inline in Claude conversations
-
-**Meeting Insights:**
-• Structured insight events: decisions, commitments, questions with confidence levels
-• Query insights by type, confidence, participant, and time range
-• Only high-confidence insights trigger downstream actions
-
-**Knowledge Base:**
-• After each meeting, extract structured facts into person profiles that compound over time
-• Decision history, commitment tracking, chronological log
-• Three output formats: flat wiki, PARA, Obsidian
-• Zero LLM required for extraction (reads structured YAML frontmatter)
-
-**Try It:**
-• `minutes demo --full` seeds 5 sample meetings, `--query` shows cross-meeting intelligence
-• No mic or setup required
-
-**Agent-Friendly:**
-• MCP resources for stable context (recent meetings, action items, events)
-• Subscribable insight events for workflow automation
-• Structured YAML frontmatter on all output
-
-**Privacy:** All audio processing happens locally via whisper.cpp (or parakeet.cpp) and pyannote-rs. No audio or transcripts are sent anywhere. Summarization is optional and uses your own LLM connection.
+**Privacy:** all audio processing happens locally via whisper.cpp or parakeet.cpp plus pyannote-rs. No audio or transcripts are sent anywhere.
 
 ## Choose your surface
 
@@ -86,7 +62,7 @@ Minutes is conversation memory for AI. Record, transcribe, search, and query eve
   - When: User works in Claude Code and wants meeting lifecycle skills and proactive hooks.
   - Install: `claude plugin marketplace add silverstein/minutes`
   - Best for: Best for workflow guidance, prep, debrief, and meeting coaching.
-  - Notes: 19 skills (brief, prep, record, tag, debrief, mirror, weekly, graph, video review) plus a meeting-analyst agent and SessionStart/PostToolUse hooks.
+  - Notes: 19 skills (brief, prep, debrief, graph, video review, and the rest of the meeting lifecycle) plus a meeting-analyst agent and SessionStart/PostToolUse hooks.
 - Desktop app
   - When: User wants a menu bar app with one-click recording, Recall, and artifact drafting.
   - Install: `brew install --cask silverstein/tap/minutes`
@@ -142,3 +118,104 @@ Minutes is conversation memory for AI. Record, transcribe, search, and query eve
 - `minutes://events/recent` — Recent pipeline events (recordings, processing, notes) Docs: https://useminutes.app/docs/mcp/tools#resource-recent-events
 - `minutes://ideas/recent` — Recent voice memos and ideas captured from any device (last 14 days) Docs: https://useminutes.app/docs/mcp/tools#resource-recent-ideas
 - `minutes://meetings/{slug}` — Get a specific meeting by its filename slug Docs: https://useminutes.app/docs/mcp/tools#resource-meeting
+
+## Claude Code Plugin skill surface
+
+Workflow-level skills that wrap MCP tools into operator motions. Install in Claude Code via `claude plugin marketplace add silverstein/minutes` then `/plugin install minutes@minutes`. The same skills ship as a portable pack at `.agents/skills/minutes/` for Codex / Gemini CLI and at `.opencode/skills/` + `.opencode/commands/` for OpenCode. New skills must declare `metadata.site_category`, `metadata.site_example`, and `metadata.site_best_for` in `tooling/skills/sources/<name>/skill.md`.
+
+### Artifacts
+
+- `/minutes-video-review` — Turn a Loom, ScreenPal, or local walkthrough video into a durable artifact bundle for agent review.
+  - Description: Review a demo, walkthrough, or bug video into a durable brief.
+  - Example: `/minutes-video-review https://go.screenpal.com/watch/...`
+  - Docs: https://useminutes.app/for-agents#minutes-video-review
+
+### Capture
+
+- `/minutes-cleanup` — Archive or delete old recordings when storage starts piling up.
+  - Description: Manage old recordings — find large files, archive old meetings, delete processed originals.
+  - Example: `/minutes-cleanup`
+  - Docs: https://useminutes.app/for-agents#minutes-cleanup
+- `/minutes-list` — Browse recent meetings and voice memos when you need to find the right artifact first.
+  - Description: List recent meetings and voice memos.
+  - Example: `/minutes-list`
+  - Docs: https://useminutes.app/for-agents#minutes-list
+- `/minutes-note` — Drop a timestamped note into the current recording or annotate a past one.
+  - Description: Add a note to the current recording or annotate a past meeting. Use whenever the user says "note that", "remember this", "mark this as important", "add a note about", "annotate the meeting", or wants to capture a thought during or after a recording. Plain text input — no markdown needed.
+  - Example: `/minutes-note Alex wants monthly billing`
+  - Docs: https://useminutes.app/for-agents#minutes-note
+- `/minutes-recap` — Get a same-day digest across meetings and voice memos.
+  - Description: Generate a daily digest of today's meetings and voice memos — key decisions, action items, and themes across all recordings.
+  - Example: `/minutes-recap`
+  - Docs: https://useminutes.app/for-agents#minutes-recap
+- `/minutes-record` — Start or stop a meeting, call, or voice memo recording.
+  - Description: Start or stop recording a meeting, call, or voice memo. Use this whenever the user says "record", "start recording", "capture this meeting", "stop recording", "I'm in a meeting", "take notes on this call", or wants to transcribe live audio. Also use when they ask about recording status or want to know if something is being recorded.
+  - Example: `/minutes-record`
+  - Docs: https://useminutes.app/for-agents#minutes-record
+- `/minutes-setup` — Walk a first-time user through getting Minutes ready to record.
+  - Description: Guided first-time setup for Minutes — download whisper model, create directories, configure audio input.
+  - Example: `/minutes-setup`
+  - Docs: https://useminutes.app/for-agents#minutes-setup
+- `/minutes-verify` — Health-check the install, models, mic, and stale state before trusting it in production.
+  - Description: Verify that Minutes is properly set up and working — model downloaded, mic accessible, directories exist, no stale state.
+  - Example: `/minutes-verify`
+  - Docs: https://useminutes.app/for-agents#minutes-verify
+
+### Coaching
+
+- `/minutes-mirror` — Review your own talk-time, hedging, and performance patterns across meetings.
+  - Description: Self-coaching analysis of your own behavior across meetings — talk-time ratio, filler words, hedging language, monologue length, energy patterns, and (when meetings are tagged via /minutes-tag) what your behavior in winning meetings looks like vs losing ones. Use this whenever the user says "how did I do", "review my last meeting", "mirror", "self-review", "show my patterns", "coach me", "where am I weak", "talk time", "am I improving", "what do I do in meetings I win", "feedback on me", or asks for any kind of personal feedback on their own meeting behavior. This is the rare skill that gives the user a mirror to their own habits — surface it whenever they show curiosity about their own performance, even if they don't use the word "mirror".
+  - Example: `/minutes-mirror`
+  - Docs: https://useminutes.app/for-agents#minutes-mirror
+- `/minutes-tag` — Label a meeting outcome in five seconds so later coaching gets smarter.
+  - Description: Lightweight outcome tagging for meetings — won, lost, stalled, great, or noise. Use whenever the user says "tag this meeting", "mark that as a win", "that one was a loss", "tag yesterday's call as stalled", "mark this great", "that meeting was noise", "label that meeting", or any time they describe a meeting outcome in passing. Tagging takes 5 seconds and unlocks /minutes-mirror correlation analysis — the more meetings get tagged, the smarter mirror gets at telling the user what behavior patterns lead to wins. Surface this skill any time the user mentions a meeting result, win, loss, or wasted time.
+  - Example: `/minutes-tag won`
+  - Docs: https://useminutes.app/for-agents#minutes-tag
+
+### Intelligence
+
+- `/minutes-graph` — Query who mentioned what across all meetings as a relationship graph.
+  - Description: Cross-meeting entity graph — query who/what/when across all your meetings as structured data, with co-occurrence and cross-entity queries that text search can't answer. Use whenever the user says "show me everyone who mentioned X", "every time we talked about Y", "who knows about Z", "graph", "across all meetings", "entity search", "first time we talked about", "trend for X over time", "who's been mentioned alongside", or wants to query meetings as an index rather than full-text search. Builds a JSON entity index on first run (one-time slow), then answers queries instantly. Surface this skill for relationship intelligence, due diligence, or any "across all my history" question that text search alone can't answer.
+  - Example: `/minutes-graph everyone who mentioned Stripe`
+  - Docs: https://useminutes.app/for-agents#minutes-graph
+
+### Knowledge
+
+- `/minutes-ideas` — Surface recent voice memos and loose ideas captured from any device.
+  - Description: Surface recent voice memos and ideas captured from any device.
+  - Example: `/minutes-ideas`
+  - Docs: https://useminutes.app/for-agents#minutes-ideas
+- `/minutes-ingest` — Extract structured facts from meetings into an external knowledge base.
+  - Description: Extract facts from meetings and update your knowledge base — person profiles, chronological log, and index.
+  - Example: `/minutes-ingest`
+  - Docs: https://useminutes.app/for-agents#minutes-ingest
+- `/minutes-lint` — Audit meeting memory for contradictions, stale commitments, and decision conflicts.
+  - Description: Health-check your meeting knowledge for contradictions, stale commitments, and decision conflicts.
+  - Example: `/minutes-lint`
+  - Docs: https://useminutes.app/for-agents#minutes-lint
+
+### Lifecycle
+
+- `/minutes-brief` — Get a fast one-page brief before an upcoming meeting.
+  - Description: Fast meeting briefing from your conversation memory.
+  - Example: `/minutes-brief`
+  - Docs: https://useminutes.app/for-agents#minutes-brief
+- `/minutes-debrief` — Turn the latest meeting into decisions, follow-ups, and what changed from prep.
+  - Description: Post-meeting debrief tied back to prep and decisions.
+  - Example: `/minutes-debrief`
+  - Docs: https://useminutes.app/for-agents#minutes-debrief
+- `/minutes-prep` — Do a deeper relationship brief and talking-point prep before an important call.
+  - Description: Interactive meeting prep from your conversation history.
+  - Example: `/minutes-prep Alex`
+  - Docs: https://useminutes.app/for-agents#minutes-prep
+- `/minutes-weekly` — See weekly themes, stale commitments, and what deserves attention next.
+  - Description: Weekly meeting synthesis — themes, decision arcs, stale commitments, and what deserves your attention next week.
+  - Example: `/minutes-weekly`
+  - Docs: https://useminutes.app/for-agents#minutes-weekly
+
+### Search
+
+- `/minutes-search` — Find a topic, quote, person, or decision across past transcripts.
+  - Description: Search past meeting transcripts and voice memos for specific topics, people, decisions, or ideas. Use this whenever the user asks "what did we discuss about X", "find that meeting where we talked about Y", "what did Alex say", "did we decide on", "what was that idea about", or any question that could be answered by searching their meeting history. Also use for "do I have any notes about" or "check my meetings for".
+  - Example: `/minutes-search pricing strategy`
+  - Docs: https://useminutes.app/for-agents#minutes-search

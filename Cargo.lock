@@ -3115,9 +3115,6 @@ dependencies = [
  "minutes-core",
  "notify",
  "notify-rust",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
  "portable-pty",
  "reqwest 0.12.28",
  "serde",
@@ -3181,6 +3178,8 @@ dependencies = [
  "ndarray",
  "nnnoiseless",
  "notify",
+ "objc2",
+ "objc2-app-kit",
  "ort",
  "pyannote-rs",
  "rusqlite",
@@ -3199,6 +3198,7 @@ dependencies = [
  "whisper-guard",
  "whisper-rs",
  "windows-sys 0.59.0",
+ "zbus",
 ]
 
 [[package]]

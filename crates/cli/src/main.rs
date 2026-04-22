@@ -1564,22 +1564,30 @@ fn cmd_record(
     // Check if already recording
     let recording_started_at = Local::now();
     minutes_core::pid::create().map_err(|e| anyhow::anyhow!("{}", e))?;
-    let context_session_id = match minutes_core::context_store::start_capture_session(
+    let context_session_id = minutes_core::desktop_context::maybe_start_capture_session(
+        &config.desktop_context,
         capture_mode,
         title.clone(),
         recording_started_at,
-    ) {
-        Ok(session) => Some(session.id),
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to create context session for recording");
-            None
-        }
-    };
+    );
     minutes_core::pid::write_recording_metadata_with_context(
         capture_mode,
         context_session_id.as_deref(),
     )
     .ok();
+    let _desktop_context_collector = context_session_id.as_ref().and_then(|session_id| {
+        match minutes_core::desktop_context::DesktopContextCollector::start(
+            session_id.clone(),
+            minutes_core::desktop_context::DesktopContextSessionKind::Recording,
+            config.desktop_context.clone(),
+        ) {
+            Ok(collector) => Some(collector),
+            Err(error) => {
+                tracing::warn!(error = %error, "desktop context collector unavailable for CLI recording");
+                None
+            }
+        }
+    });
 
     // Save recording start time (for timestamping notes)
     minutes_core::notes::save_recording_start()?;
@@ -6502,7 +6510,26 @@ fn cmd_live(config: &Config) -> Result<()> {
 
     // No sentinel watcher needed — run_inner already polls check_and_clear_sentinel
     // directly in its main loop, avoiding the thread-join and double-consume race.
-    match minutes_core::live_transcript::run(stop, config, None) {
+    let live_context_session_id =
+        minutes_core::desktop_context::maybe_start_live_transcript_session(
+            &config.desktop_context,
+            Local::now(),
+        );
+    let _desktop_context_collector = live_context_session_id.as_ref().and_then(|session_id| {
+        match minutes_core::desktop_context::DesktopContextCollector::start(
+            session_id.clone(),
+            minutes_core::desktop_context::DesktopContextSessionKind::LiveTranscript,
+            config.desktop_context.clone(),
+        ) {
+            Ok(collector) => Some(collector),
+            Err(error) => {
+                tracing::warn!(error = %error, "desktop context collector unavailable for CLI live transcript");
+                None
+            }
+        }
+    });
+
+    match minutes_core::live_transcript::run(stop, config, live_context_session_id) {
         Ok((lines, duration, path)) => {
             eprintln!("\nLive transcript complete:");
             eprintln!("  {} utterances in {:.0}s", lines, duration);

@@ -423,11 +423,8 @@ mod platform {
         }
 
         let mut focused_window: ffi::CFTypeRef = std::ptr::null();
-        let focused_window_result = ffi::AXUIElementCopyAttributeValue(
-            app,
-            focused_window_attribute,
-            &mut focused_window,
-        );
+        let focused_window_result =
+            ffi::AXUIElementCopyAttributeValue(app, focused_window_attribute, &mut focused_window);
         ffi::CFRelease(focused_window_attribute.cast());
         ffi::CFRelease(app.cast());
         if focused_window_result != ffi::kAXErrorSuccess || focused_window.is_null() {
@@ -445,11 +442,8 @@ mod platform {
         }
 
         let mut title: ffi::CFTypeRef = std::ptr::null();
-        let title_result = ffi::AXUIElementCopyAttributeValue(
-            focused_window.cast(),
-            title_attribute,
-            &mut title,
-        );
+        let title_result =
+            ffi::AXUIElementCopyAttributeValue(focused_window.cast(), title_attribute, &mut title);
         ffi::CFRelease(title_attribute.cast());
         ffi::CFRelease(focused_window.cast());
         if title_result != ffi::kAXErrorSuccess || title.is_null() {

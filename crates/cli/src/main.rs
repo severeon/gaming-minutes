@@ -559,6 +559,10 @@ enum Commands {
         /// Parakeet model to download: tdt-ctc-110m, tdt-600m
         #[arg(long, default_value = "tdt-600m")]
         parakeet_model: String,
+
+        /// Install the bundled 5-meeting fixture corpus for demoing search, graph, and MCP flows
+        #[arg(long)]
+        demo: bool,
     },
 
     /// Inspect or register the meetings directory as a QMD collection
@@ -1228,8 +1232,11 @@ fn main() -> Result<()> {
             diarization,
             parakeet,
             parakeet_model,
+            demo,
         } => {
-            if parakeet {
+            if demo {
+                cmd_setup_demo()
+            } else if parakeet {
                 cmd_setup_parakeet(&parakeet_model)
             } else {
                 cmd_setup(&model, list, diarization)
@@ -3635,6 +3642,48 @@ fn cmd_setup(model: &str, list: bool, diarization: bool) -> Result<()> {
     Ok(())
 }
 
+fn cmd_setup_demo() -> Result<()> {
+    let demo_dir = Config::minutes_dir().join("demo");
+    let install = demo_data::install_mcp_demo_fixtures(&demo_dir)?;
+
+    if install.updated_fixtures == 0 {
+        eprintln!(
+            "Demo corpus already ready at: {}",
+            install.demo_dir.display()
+        );
+    } else {
+        eprintln!(
+            "Demo corpus ready at: {} ({} fixture meetings)",
+            install.demo_dir.display(),
+            install.total_fixtures
+        );
+    }
+
+    eprintln!("Use it with MCP or any agent client by pointing MEETINGS_DIR at that folder:");
+    eprintln!();
+    eprintln!("  {{");
+    eprintln!("    \"mcpServers\": {{");
+    eprintln!("      \"minutes-demo\": {{");
+    eprintln!("        \"command\": \"npx\",");
+    eprintln!("        \"args\": [\"minutes-mcp\"],");
+    eprintln!(
+        "        \"env\": {{ \"MEETINGS_DIR\": \"{}\" }}",
+        install.demo_dir.display()
+    );
+    eprintln!("      }}");
+    eprintln!("    }}");
+    eprintln!("  }}");
+    eprintln!();
+    eprintln!("Try asking your agent:");
+    eprintln!("  - List the meetings in this corpus.");
+    eprintln!("  - What did we decide about pricing? Which decision is current?");
+    eprintln!("  - What got killed in the last product prioritization meeting?");
+    eprintln!("  - What action items are still open, and who owns each?");
+    eprintln!("  - Summarize the Northwind customer thread.");
+
+    Ok(())
+}
+
 fn cmd_setup_diarization() -> Result<()> {
     use minutes_core::diarize;
 
@@ -4826,6 +4875,32 @@ life (qmd://life/)
                 !meetings.join("archive/2026-04-01-force.md").exists(),
                 "nothing in archive for force delete"
             );
+        });
+    }
+
+    #[test]
+    fn setup_demo_installs_five_mcp_fixture_meetings_idempotently() {
+        with_temp_home(|_| {
+            let demo_dir = Config::minutes_dir().join("demo");
+
+            let first = demo_data::install_mcp_demo_fixtures(&demo_dir).unwrap();
+            assert_eq!(first.total_fixtures, 5);
+            assert_eq!(first.updated_fixtures, 5);
+
+            let files = std::fs::read_dir(&demo_dir)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
+                .count();
+            assert_eq!(files, 5);
+
+            let one_fixture =
+                std::fs::read_to_string(demo_dir.join("2026-02-28-pricing-strategy.md")).unwrap();
+            assert!(one_fixture.contains("minutes_demo: true"));
+
+            let second = demo_data::install_mcp_demo_fixtures(&demo_dir).unwrap();
+            assert_eq!(second.total_fixtures, 5);
+            assert_eq!(second.updated_fixtures, 0);
         });
     }
 

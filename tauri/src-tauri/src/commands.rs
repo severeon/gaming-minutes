@@ -5836,9 +5836,7 @@ pub fn cmd_get_settings() -> serde_json::Value {
     #[cfg(not(target_os = "macos"))]
     let accessibility_trusted = false;
     let desktop_context_filtered = !config.desktop_context.denied_apps.is_empty()
-        || !config.desktop_context.allowed_apps.is_empty()
-        || !config.desktop_context.allowed_domains.is_empty()
-        || !config.desktop_context.denied_domains.is_empty();
+        || !config.desktop_context.allowed_apps.is_empty();
     let desktop_context_limited =
         config.desktop_context.capture_window_titles && !accessibility_trusted;
     let desktop_context_state = if !config.desktop_context.enabled {
@@ -5923,8 +5921,6 @@ pub fn cmd_get_settings() -> serde_json::Value {
             "capture_browser_context": config.desktop_context.capture_browser_context,
             "allowed_apps": config.desktop_context.allowed_apps,
             "denied_apps": config.desktop_context.denied_apps,
-            "allowed_domains": config.desktop_context.allowed_domains,
-            "denied_domains": config.desktop_context.denied_domains,
             "state": desktop_context_state,
             "filtered": desktop_context_filtered,
             "limited": desktop_context_limited,

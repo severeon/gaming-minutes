@@ -4630,7 +4630,7 @@
         <div class="about-controls">
           <div class="about-controls-group">
             <div class="about-controls-copy">Browser title context</div>
-            <div class="about-controls-meta">Opt-in browser-page titles only. URL/domain enrichment remains deferred and privacy-gated.</div>
+            <div class="about-controls-meta">Opt-in browser tab and window titles only. URLs and domains are not collected in v1.</div>
           </div>
           <button class="btn btn-secondary btn-sm toggle-btn" id="settings-desktop-browser-context">Off</button>
         </div>
@@ -4646,20 +4646,6 @@
             <div class="about-controls-copy">Denied apps</div>
             <div class="about-controls-meta">Comma-separated app or bundle-id fragments to suppress from desktop context capture.</div>
             <input type="text" id="settings-desktop-denied-apps" placeholder="e.g. 1password, Messages" class="settings-field">
-          </div>
-        </div>
-        <div class="about-controls is-deferred">
-          <div class="about-controls-group">
-            <div class="about-controls-copy">Allowed domains</div>
-            <div class="about-controls-meta">Reserved for future browser URL enrichment. Safe to leave empty for now.</div>
-            <input type="text" id="settings-desktop-allowed-domains" placeholder="e.g. docs.stripe.com, linear.app" class="settings-field">
-          </div>
-        </div>
-        <div class="about-controls is-deferred">
-          <div class="about-controls-group">
-            <div class="about-controls-copy">Denied domains</div>
-            <div class="about-controls-meta">Reserved for future browser URL enrichment. Useful to preconfigure sensitive sites.</div>
-            <input type="text" id="settings-desktop-denied-domains" placeholder="e.g. mail.google.com, bank.example" class="settings-field">
           </div>
         </div>
         <div class="about-controls">
@@ -7299,10 +7285,6 @@
             (s.desktop_context.allowed_apps || []).join(', ');
           document.getElementById('settings-desktop-denied-apps').value =
             (s.desktop_context.denied_apps || []).join(', ');
-          document.getElementById('settings-desktop-allowed-domains').value =
-            (s.desktop_context.allowed_domains || []).join(', ');
-          document.getElementById('settings-desktop-denied-domains').value =
-            (s.desktop_context.denied_domains || []).join(', ');
         }
         setSettingsToggle('settings-screen-context', s.screen_context.enabled);
         document.getElementById('settings-screen-interval-row').classList.toggle('is-hidden', !s.screen_context.enabled);
@@ -7476,20 +7458,20 @@
     function setSettingsToggle(id, on) { const b = document.getElementById(id); b.textContent = on ? 'On' : 'Off'; b.style.opacity = on ? '1' : '0.5'; }
     function desktopContextStateLabel(state, filtered = false, limited = false) {
       if (state === 'recording') {
-        if (limited && filtered) return 'Active during a recording or live session. Limited by Accessibility availability and narrowed by app/domain filters.';
+        if (limited && filtered) return 'Active during a recording or live session. Limited by Accessibility availability and narrowed by app filters.';
         if (limited) return 'Active during a recording or live session. Limited because Accessibility-backed window titles are unavailable right now.';
-        if (filtered) return 'Active during a recording or live session. Filters are narrowing what is collected.';
+        if (filtered) return 'Active during a recording or live session. App filters are narrowing what is collected.';
         return 'Active during a recording or live session.';
       }
       if (state === 'idle') {
-        if (limited && filtered) return 'Enabled. Currently limited by Accessibility availability and narrowed by app/domain filters.';
+        if (limited && filtered) return 'Enabled. Currently limited by Accessibility availability and narrowed by app filters.';
         if (limited) return 'Enabled, but limited. Accessibility-backed window titles are unavailable right now.';
-        if (filtered) return 'Enabled and filtered. App/domain rules will narrow what gets collected.';
+        if (filtered) return 'Enabled and filtered. App rules will narrow what gets collected.';
         return 'Enabled. Desktop context will attach to the next recording or live session.';
       }
-      if (limited && filtered) return 'Limited by Accessibility availability and narrowed by app/domain filters.';
+      if (limited && filtered) return 'Limited by Accessibility availability and narrowed by app filters.';
       if (limited) return 'Limited. Accessibility-backed window titles are unavailable right now.';
-      if (filtered) return 'Filtered. Capture is on, but app/domain rules are narrowing what is collected.';
+      if (filtered) return 'Filtered. Capture is on, but app rules are narrowing what is collected.';
       return 'Off. App/window context stays disabled until you turn it on.';
     }
     function assistantAgentPlaceholder(agent) {
@@ -7819,8 +7801,6 @@
     wireDesktopContextToggle('settings-desktop-browser-context', 'capture_browser_context', 'browser context');
     wireDesktopContextList('settings-desktop-allowed-apps', 'allowed_apps', 'allowed apps');
     wireDesktopContextList('settings-desktop-denied-apps', 'denied_apps', 'denied apps');
-    wireDesktopContextList('settings-desktop-allowed-domains', 'allowed_domains', 'allowed domains');
-    wireDesktopContextList('settings-desktop-denied-domains', 'denied_domains', 'denied domains');
     document.getElementById('settings-agent').addEventListener('change', async (e) => {
       await invoke('cmd_set_setting', { section: 'assistant', key: 'agent', value: e.target.value });
       await saveAgentArgs();

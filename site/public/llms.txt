@@ -18,7 +18,7 @@ Minutes is an open-source meeting corpus you own. Record, transcribe, search, an
 
 ## For AI Agents
 
-minutes exposes a standard MCP server with 26 tools, 7 resources, and 6 prompt templates. Any MCP-compatible client can use it as a conversation memory layer.
+minutes exposes a standard MCP server with 29 tools, 7 resources, and 6 prompt templates. Any MCP-compatible client can use it as a conversation memory layer.
 
 ## Choose Your Surface
 
@@ -49,6 +49,9 @@ Recommended install:
 - `list_meetings` — List recent meetings and voice memos Docs: https://useminutes.app/docs/mcp/tools#tool-list-meetings
 - `search_meetings` — Search meeting transcripts and voice memos Docs: https://useminutes.app/docs/mcp/tools#tool-search-meetings
 - `get_meeting` — Get full transcript of a specific meeting Docs: https://useminutes.app/docs/mcp/tools#tool-get-meeting
+- `activity_summary` — Summarize meeting-adjacent desktop context for a linked artifact, context session, or time window Docs: https://useminutes.app/docs/mcp/tools#tool-activity-summary
+- `search_context` — Search desktop-context events across app focus and captured window titles, including opted-in browser titles Docs: https://useminutes.app/docs/mcp/tools#tool-search-context
+- `get_moment` — Show the local desktop-context rewind around a linked artifact, session, or timestamp Docs: https://useminutes.app/docs/mcp/tools#tool-get-moment
 - `process_audio` — Process an audio file through the transcription pipeline Docs: https://useminutes.app/docs/mcp/tools#tool-process-audio
 - `add_note` — Add a timestamped note to the current recording or an existing meeting Docs: https://useminutes.app/docs/mcp/tools#tool-add-note
 - `consistency_report` — Flag conflicting decisions and stale commitments Docs: https://useminutes.app/docs/mcp/tools#tool-consistency-report

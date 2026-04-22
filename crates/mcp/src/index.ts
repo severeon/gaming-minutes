@@ -13,7 +13,7 @@
  *   - process_audio: Process an audio file through the pipeline
  *   - add_note: Add a timestamped note to a recording or meeting
  *   - activity_summary: Summarize meeting-adjacent desktop context for a session/path/window
- *   - search_context: Search app/window/browser-title desktop context
+ *   - search_context: Search app and captured window-title desktop context
  *   - get_moment: Show the local rewind around a linked artifact, session, or timestamp
  *   - consistency_report: Flag conflicting decisions and stale commitments
  *   - get_person_profile: Rich relationship profile for a person (graph index)
@@ -1465,9 +1465,9 @@ registerDocsAppTool(
   server,
   "search_context",
   {
-    description: "Search desktop-context events across app focus, window titles, and browser-title context.",
+    description: "Search desktop-context events across app focus and captured window titles, including opted-in browser titles.",
     inputSchema: {
-      query: z.string().describe("Text query for app names, bundle ids, window titles, URLs, or domains"),
+      query: z.string().describe("Text query for app names, bundle ids, or captured window titles"),
       limit: z.number().optional().default(20).describe("Maximum results"),
     },
     annotations: { title: "Search Context", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1490,7 +1490,7 @@ registerDocsAppTool(
       : results
           .map(
             (event: any) =>
-              `${event.observed_at} — ${event.app_name || event.bundle_id || "unknown"}${event.window_title ? ` :: ${event.window_title}` : ""}${event.url ? ` <${event.url}>` : ""}`
+              `${event.observed_at} — ${event.app_name || event.bundle_id || "unknown"}${event.window_title ? ` :: ${event.window_title}` : ""}`
           )
           .join("\n");
 

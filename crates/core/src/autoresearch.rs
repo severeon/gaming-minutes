@@ -1207,4 +1207,29 @@ mod tests {
         assert_eq!(runs[1].kind, "decode-hints");
         assert_eq!(runs[1].source_path, PathBuf::from("/tmp/corpus.json"));
     }
+
+    #[test]
+    fn checked_in_example_corpus_matches_supported_gate_shape() {
+        let fixture = include_str!("../../../tests/fixtures/proper-name-eval.example.json");
+        let cases: Vec<DecodeHintEvalCase> =
+            serde_json::from_str(fixture).expect("example corpus should parse");
+
+        assert_eq!(cases.len(), 3, "keep the public starter corpus intentional");
+        assert!(
+            cases.iter().any(|case| case.id == "self-intro-parakeet"),
+            "starter corpus should include a parakeet self-name case"
+        );
+        assert!(
+            cases.iter().any(|case| case.id == "self-intro-whisper"),
+            "starter corpus should include a whisper self-name case"
+        );
+        let research_case = cases
+            .iter()
+            .find(|case| case.id == "external-proper-noun-research")
+            .expect("starter corpus should include the external proper-noun research case");
+        assert!(
+            !research_case.allowed_failure_substrings.is_empty(),
+            "external proper-noun example should stay explicitly scoped as research"
+        );
+    }
 }

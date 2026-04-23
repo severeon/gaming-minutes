@@ -4947,7 +4947,7 @@ mod tests {
                     status: "allowed-failure".into(),
                     failure_reasons: vec![],
                     allowed_failure_reasons: vec![
-                        "missing required hinted term 'casey rowan'".into(),
+                        "missing required hinted term 'casey rowan'".into()
                     ],
                 },
             ],

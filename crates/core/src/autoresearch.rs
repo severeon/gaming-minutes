@@ -1221,9 +1221,7 @@ mod tests {
                 passed: true,
                 status: "allowed-failure".into(),
                 failure_reasons: vec![],
-                allowed_failure_reasons: vec![
-                    "missing required hinted term 'casey rowan'".into()
-                ],
+                allowed_failure_reasons: vec!["missing required hinted term 'casey rowan'".into()],
             }],
             failure_messages: vec![],
         }
@@ -1273,9 +1271,7 @@ mod tests {
         let summary = render_decode_hint_eval_summary(&sample_allowed_failure_report());
         assert!(summary.contains("Verdict: **PASS WITH ALLOWED FAILURES**"));
         assert!(summary.contains("Allowed failures: 1"));
-        assert!(
-            summary.contains("allowed failures: missing required hinted term 'casey rowan'")
-        );
+        assert!(summary.contains("allowed failures: missing required hinted term 'casey rowan'"));
     }
 
     #[test]
@@ -1428,9 +1424,7 @@ mod tests {
                 lost_focus_hits: vec![],
                 newly_missing_terms: vec![],
                 resolved_failures: vec![],
-                newly_allowed_failures: vec![
-                    "missing required hinted term 'casey rowan'".into()
-                ],
+                newly_allowed_failures: vec!["missing required hinted term 'casey rowan'".into()],
                 resolved_allowed_failures: vec![
                     "missing required hinted term 'northstar studio'".into()
                 ],
@@ -1438,10 +1432,12 @@ mod tests {
         };
 
         let summary = render_decode_hint_eval_comparison_summary(&report);
-        assert!(summary
-            .contains("new allowed failures: missing required hinted term 'casey rowan'"));
-        assert!(summary
-            .contains("resolved allowed failures: missing required hinted term 'northstar studio'"));
+        assert!(
+            summary.contains("new allowed failures: missing required hinted term 'casey rowan'")
+        );
+        assert!(summary.contains(
+            "resolved allowed failures: missing required hinted term 'northstar studio'"
+        ));
     }
 
     #[test]
@@ -1487,9 +1483,7 @@ mod tests {
                 lost_focus_hits: vec![],
                 newly_missing_terms: vec![],
                 resolved_failures: vec![],
-                newly_allowed_failures: vec![
-                    "missing required hinted term 'casey rowan'".into()
-                ],
+                newly_allowed_failures: vec!["missing required hinted term 'casey rowan'".into()],
                 resolved_allowed_failures: vec![],
             }],
         };

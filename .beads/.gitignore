@@ -1,6 +1,6 @@
 # Dolt database (managed by Dolt, not git)
 dolt/
-embeddeddolt/
+dolt-access.lock
 
 # Runtime files
 bd.sock
@@ -8,6 +8,9 @@ bd.sock.startlock
 sync-state.json
 last-touched
 .exclusive-lock
+
+# Credential encryption key (local secret, never commit)
+.beads-credential-key
 
 # Daemon runtime (lock, log, pid)
 daemon.*
@@ -21,9 +24,6 @@ push-state.json
 # Lock files (various runtime locks)
 *.lock
 
-# Credential key (encryption key for federation peer auth — never commit)
-.beads-credential-key
-
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
 
@@ -35,7 +35,6 @@ redirect
 # These files are machine-specific and should not be shared across clones
 .sync.lock
 export-state/
-export-state.json
 
 # Ephemeral store (SQLite - wisps/molecules, intentionally not versioned)
 ephemeral.sqlite3
@@ -48,16 +47,12 @@ dolt-server.pid
 dolt-server.log
 dolt-server.lock
 dolt-server.port
-dolt-server.activity
 
 # Corrupt backup directories (created by bd doctor --fix recovery)
 *.corrupt.backup/
 
 # Backup data (auto-exported JSONL, local-only)
 backup/
-
-# Per-project environment file (Dolt connection config, GH#2520)
-.env
 
 # Legacy files (from pre-Dolt versions)
 *.db

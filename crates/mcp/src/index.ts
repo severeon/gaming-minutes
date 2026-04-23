@@ -62,6 +62,11 @@ import {
   validatePathInDirectory,
 } from "./paths.js";
 import { isCliCompatible } from "./version.js";
+import {
+  hasFeature,
+  probeCapabilitiesSync,
+  type CapabilityReport,
+} from "./capabilities.js";
 
 crashTrace("imports-complete");
 
@@ -375,6 +380,25 @@ function findMinutesBinary(): string {
 }
 
 let MINUTES_BIN = findMinutesBinary();
+
+// ── Capability probe (Phase 2 of #183) ────────────────────────
+// Ask the CLI what it supports instead of inferring from version strings.
+// Synchronous so it can run before tool registrations at module load.
+// A `null` report means we could not probe (missing or old CLI): the
+// `hasFeature` helper treats that as "optimistic yes" so we preserve
+// backward compatibility with pre-0.14.0 CLIs that have no `capabilities`
+// subcommand.
+const CLI_CAPABILITIES: CapabilityReport | null =
+  probeCapabilitiesSync(MINUTES_BIN);
+if (CLI_CAPABILITIES) {
+  crashTrace("cli-capabilities-probed", {
+    cliVersion: CLI_CAPABILITIES.version,
+    apiVersion: CLI_CAPABILITIES.api_version,
+    featureCount: Object.keys(CLI_CAPABILITIES.features).length,
+  });
+} else {
+  crashTrace("cli-capabilities-unknown");
+}
 
 // ── MCP server version ────────────────────────────────────────
 // Kept for capabilities handshake and user-facing log messages.
@@ -1419,7 +1443,13 @@ registerDocsAppTool(
 );
 
 // ── Tool: activity_summary ──────────────────────────────────
+// Feature-gated (#183 phase 2). Hidden when the CLI does not report
+// activity_summary in its capability probe. On an older CLI that has no
+// `capabilities` subcommand, the probe returns null and `hasFeature`
+// resolves to true, so the tool is still exposed and any runtime call
+// surfaces a clear CLI error rather than silently disappearing.
 
+if (hasFeature(CLI_CAPABILITIES, "activity_summary"))
 registerDocsAppTool(
   server,
   "activity_summary",
@@ -1470,7 +1500,9 @@ registerDocsAppTool(
 );
 
 // ── Tool: search_context ────────────────────────────────────
+// Feature-gated (#183 phase 2). See activity_summary comment above.
 
+if (hasFeature(CLI_CAPABILITIES, "search_context"))
 registerDocsAppTool(
   server,
   "search_context",
@@ -1513,7 +1545,9 @@ registerDocsAppTool(
 );
 
 // ── Tool: get_moment ────────────────────────────────────────
+// Feature-gated (#183 phase 2). See activity_summary comment above.
 
+if (hasFeature(CLI_CAPABILITIES, "get_moment"))
 registerDocsAppTool(
   server,
   "get_moment",

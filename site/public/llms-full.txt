@@ -20,7 +20,7 @@ Minutes is an open-source meeting corpus you own. Record, transcribe, search, an
 • **Calendar is safer and more honest.** `[calendar] enabled=false` is now respected throughout. The background calendar poller no longer auto-launches Calendar.app. The `calendar-events` helper is correctly bundled into release `.app` builds on macOS.
 • **Native call capture can bypass the loopback preflight** when the desktop path is available, so ScreenCaptureKit-based setups don't need loopback installed to record system audio.
 • **Windows and Linux desktop-context collectors.** Shared implementation lands alongside the existing macOS path. Platform-gated cleanly so cross-compile stays green.
-• **Self-healing Claude Desktop extension.** The hosted `.mcpb` no longer breaks when our CLI version advances. Same-major skew (e.g. MCP 0.13.3 against CLI 0.14.0) is silent-compatible, and auto-install fetches the latest CLI via GitHub's `releases/latest/download/` redirect instead of a pinned tag (issue #183 Phase 1).
+• **Self-healing Claude Desktop extension.** The hosted `.mcpb` no longer breaks when our CLI version advances. Same-major skew (e.g. MCP 0.13.3 against CLI 0.14.0) is silent-compatible, auto-install fetches the latest CLI via GitHub's `releases/latest/download/` redirect instead of a pinned tag, and a new `minutes capabilities --json` feature probe lets the MCP server hide tools whose backing CLI subcommand is missing rather than exposing them and surfacing runtime errors (issue #183 Phases 1 and 2).
 • **Build reliability.** Auto-recovers from stale `ort-sys` clang_rt paths after Xcode upgrades (the recurring `library not found` after macOS major updates). CLI and app feature flags stay in sync.
 
 **Agent surface polish:**

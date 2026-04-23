@@ -342,6 +342,18 @@ enum Commands {
         action: AppleSpeechAction,
     },
 
+    /// Print Minutes CLI capabilities as JSON for MCP feature detection.
+    ///
+    /// Emits a stable schema describing what this CLI build supports. The
+    /// MCP server probes this at boot (see #183 phase 2) and uses the
+    /// feature flags to decide which tools to expose without comparing
+    /// version strings.
+    Capabilities {
+        /// Output raw JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Check if a recording is in progress
     Status,
 
@@ -1176,6 +1188,7 @@ fn main() -> Result<()> {
                 cmd_apple_speech_benchmark(&corpus, out.as_deref(), json, &config)
             }
         },
+        Commands::Capabilities { json } => cmd_capabilities(json),
         Commands::Search {
             query,
             content_type,
@@ -3499,6 +3512,111 @@ fn cmd_autoresearch_list_decode_hints(limit: usize, json: bool) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Stable JSON schema describing what this CLI build supports.
+///
+/// The MCP server probes `minutes capabilities --json` at boot and uses
+/// the returned feature flags to decide which tools to register. This is
+/// the canonical surface for feature detection (see #183 phase 2); it
+/// replaces the earlier strict-equality version check.
+///
+/// Schema stability: `api_version` bumps only when the wire contract
+/// (keys removed, semantics of existing keys changed) breaks in a
+/// non-additive way. Adding new feature keys does NOT bump api_version;
+/// callers must treat missing keys as `false` so they cope with older
+/// CLIs that predate a given feature.
+#[derive(Serialize)]
+struct CapabilityReport {
+    /// Semver version string, e.g. "0.14.0".
+    version: String,
+    /// Wire-contract version. Currently 1. Only bumps on breaking changes.
+    api_version: u32,
+    /// Map of feature name to whether this CLI build supports it.
+    ///
+    /// Alphabetical via `BTreeMap` so JSON output is deterministic and
+    /// diffable across versions.
+    features: std::collections::BTreeMap<String, bool>,
+}
+
+fn build_capability_report() -> CapabilityReport {
+    // Seed the map with every feature this CLI build supports. The MCP
+    // server reads missing keys as "not supported", so adding a key here
+    // is additive and safe.
+    //
+    // Policy: when adding a new MCP-visible surface backed by a CLI
+    // subcommand, add its stable feature name here in the same commit.
+    // That is the contract the MCP server uses to decide whether to
+    // register the corresponding tool.
+    let mut features = std::collections::BTreeMap::new();
+
+    // Desktop context surface (new in 0.14.0). Backed by
+    // `minutes context activity-summary|search|get-moment`.
+    features.insert("activity_summary".into(), true);
+    features.insert("search_context".into(), true);
+    features.insert("get_moment".into(), true);
+
+    // Stable surfaces. Listed explicitly so consumers can probe for
+    // them without relying on version-string inference.
+    features.insert("add_note".into(), true);
+    features.insert("confirm_speaker".into(), true);
+    features.insert("consistency_report".into(), true);
+    features.insert("get_meeting".into(), true);
+    features.insert("get_meeting_insights".into(), true);
+    features.insert("get_person_profile".into(), true);
+    features.insert("get_status".into(), true);
+    features.insert("ingest_meeting".into(), true);
+    features.insert("knowledge_status".into(), true);
+    features.insert("list_meetings".into(), true);
+    features.insert("list_processing_jobs".into(), true);
+    features.insert("list_voices".into(), true);
+    features.insert("open_dashboard".into(), true);
+    features.insert("process_audio".into(), true);
+    features.insert("qmd_collection_status".into(), true);
+    features.insert("read_live_transcript".into(), true);
+    features.insert("register_qmd_collection".into(), true);
+    features.insert("relationship_map".into(), true);
+    features.insert("research_topic".into(), true);
+    features.insert("search_meetings".into(), true);
+    features.insert("start_dictation".into(), true);
+    features.insert("start_live_transcript".into(), true);
+    features.insert("start_recording".into(), true);
+    features.insert("stop_dictation".into(), true);
+    features.insert("stop_recording".into(), true);
+    features.insert("track_commitments".into(), true);
+
+    // Cargo-feature-gated capabilities. Some are surfaced through the
+    // feature flags so consumers know the build's runtime support.
+    features.insert("parakeet".into(), cfg!(feature = "parakeet"));
+    features.insert("diarize".into(), cfg!(feature = "diarize"));
+
+    // Setup demo fixtures (new in 0.13.3).
+    features.insert("setup_demo".into(), true);
+
+    CapabilityReport {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        api_version: 1,
+        features,
+    }
+}
+
+fn cmd_capabilities(json: bool) -> Result<()> {
+    let report = build_capability_report();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    println!("Minutes CLI capabilities");
+    println!("  version: {}", report.version);
+    println!("  api_version: {}", report.api_version);
+    println!("  features:");
+    for (name, supported) in &report.features {
+        let marker = if *supported { "yes" } else { "no" };
+        println!("    {}: {}", name, marker);
+    }
     Ok(())
 }
 

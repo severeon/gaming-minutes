@@ -821,18 +821,7 @@ pub fn transcribe_to_artifact(
         decode_hints,
     )?;
     let transcript = if content_type == ContentType::Meeting {
-        if let Some(identity) =
-            Some(&config.identity).filter(|identity| user_is_participant(&attendees, identity))
-        {
-            if let Some(canonical) = identity.name.as_deref() {
-                let variants = collect_user_participant_variants(&attendees, identity);
-                normalize_self_name_refs_in_transcript(&result.text, canonical, &variants)
-            } else {
-                result.text
-            }
-        } else {
-            result.text
-        }
+        normalize_transcript_for_self_name_participant(&result.text, &attendees, &config.identity)
     } else {
         result.text
     };
@@ -862,23 +851,9 @@ pub fn write_transcript_artifact(
     filter_stats: crate::transcribe::FilterStats,
     transcribe_ms: u64,
 ) -> Result<TranscriptArtifact, MinutesError> {
-    let word_count = transcript.split_whitespace().count();
     let metadata = std::fs::metadata(audio_path)?;
     let recording_date =
         infer_recording_date(context.recorded_at, context.sidecar.as_ref(), &metadata);
-    logging::log_step(
-        "transcribe",
-        &audio_path.display().to_string(),
-        transcribe_ms,
-        serde_json::json!({"words": word_count, "mode": "background", "diagnosis": filter_stats.diagnosis()}),
-    );
-
-    let status = if word_count < config.transcription.min_words {
-        Some(OutputStatus::NoSpeech)
-    } else {
-        Some(OutputStatus::TranscriptOnly)
-    };
-
     let matched_event = if content_type == ContentType::Meeting {
         context.calendar_event.clone().or_else(|| {
             select_calendar_event(&crate::calendar::events_overlapping(recording_date), title)
@@ -891,6 +866,24 @@ pub fn write_transcript_artifact(
         .as_ref()
         .map(|event| event.attendees.clone())
         .unwrap_or_default();
+    let transcript = if content_type == ContentType::Meeting {
+        normalize_transcript_for_self_name_participant(&transcript, &attendees, &config.identity)
+    } else {
+        transcript
+    };
+    let word_count = transcript.split_whitespace().count();
+    logging::log_step(
+        "transcribe",
+        &audio_path.display().to_string(),
+        transcribe_ms,
+        serde_json::json!({"words": word_count, "mode": "background", "diagnosis": filter_stats.diagnosis()}),
+    );
+
+    let status = if word_count < config.transcription.min_words {
+        Some(OutputStatus::NoSpeech)
+    } else {
+        Some(OutputStatus::TranscriptOnly)
+    };
 
     let auto_title = title.map(String::from).unwrap_or_else(|| {
         if status == Some(OutputStatus::NoSpeech) {
@@ -1441,18 +1434,11 @@ where
     )?;
     let transcribe_ms = step_start.elapsed().as_millis() as u64;
     let transcript = if content_type == ContentType::Meeting {
-        if let Some(identity) = Some(&config.identity)
-            .filter(|identity| user_is_participant(&calendar_attendees, identity))
-        {
-            if let Some(canonical) = identity.name.as_deref() {
-                let variants = collect_user_participant_variants(&calendar_attendees, identity);
-                normalize_self_name_refs_in_transcript(&result.text, canonical, &variants)
-            } else {
-                result.text
-            }
-        } else {
-            result.text
-        }
+        normalize_transcript_for_self_name_participant(
+            &result.text,
+            &calendar_attendees,
+            &config.identity,
+        )
     } else {
         result.text
     };
@@ -4873,6 +4859,55 @@ mod tests {
         // variant here because the guarded intro matcher handles close
         // self-name fuzz like "This is Matt" at rewrite time.
         assert_eq!(variants, vec!["Mathieu".to_string()]);
+    }
+
+    #[test]
+    fn write_transcript_artifact_normalizes_self_name_for_title_and_body() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let audio_path = dir.path().join("memo.wav");
+        std::fs::write(&audio_path, vec![0u8; 64_044]).unwrap();
+
+        let mut config = Config::default();
+        config.output_dir = dir.path().to_path_buf();
+        config.identity.name = Some("Mat".into());
+        config.identity.aliases = vec!["Matt".into()];
+
+        let context = BackgroundPipelineContext {
+            calendar_event: Some(crate::calendar::CalendarEvent {
+                title: "meeting".into(),
+                start: Local::now().to_rfc3339(),
+                minutes_until: 0,
+                attendees: vec!["Matt".into(), "Alex Chen".into()],
+                url: None,
+            }),
+            ..BackgroundPipelineContext::default()
+        };
+
+        let artifact = write_transcript_artifact(
+            &audio_path,
+            ContentType::Meeting,
+            None,
+            &config,
+            &context,
+            None,
+            "[SPEAKER_1 0:00] Matt is outlining onboarding follow up.\n".into(),
+            crate::transcribe::FilterStats::default(),
+            0,
+        )
+        .unwrap();
+
+        assert!(
+            artifact
+                .transcript
+                .contains("Mat is outlining onboarding follow up."),
+            "{}",
+            artifact.transcript
+        );
+        assert!(!artifact.transcript.contains("Matt is outlining"));
+        assert_eq!(
+            artifact.frontmatter.title,
+            "Mat Is Outlining Onboarding Follow Up"
+        );
     }
 
     #[test]

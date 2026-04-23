@@ -866,6 +866,28 @@ fn collect_decode_hint_runs(
     Ok(runs)
 }
 
+fn eval_run_status(report: &DecodeHintEvalReport) -> &'static str {
+    if !report.failure_messages.is_empty() {
+        "fail"
+    } else if report.totals.cases_allowed_failures > 0 {
+        "allowed-failure"
+    } else {
+        "pass"
+    }
+}
+
+fn comparison_run_status(report: &DecodeHintEvalComparisonReport) -> &'static str {
+    if report.totals.newly_failing_cases > 0 || report.totals.regressed_cases > 0 {
+        "mixed"
+    } else if report.cases.iter().any(|case| {
+        !case.newly_allowed_failures.is_empty() || !case.resolved_allowed_failures.is_empty()
+    }) {
+        "allowed-failure-changed"
+    } else {
+        "improved-or-stable"
+    }
+}
+
 fn collect_eval_runs(root: &Path) -> Result<Vec<DecodeHintRunIndexEntry>> {
     let mut runs = Vec::new();
     if !root.exists() {
@@ -887,15 +909,12 @@ fn collect_eval_runs(root: &Path) -> Result<Vec<DecodeHintRunIndexEntry>> {
             continue;
         }
         let report = load_decode_hint_eval_report(&results_path)?;
+        let status = eval_run_status(&report).to_string();
         runs.push(DecodeHintRunIndexEntry {
             kind: "decode-hints".into(),
             run_dir: path,
             generated_at: report.generated_at,
-            status: if report.failure_messages.is_empty() {
-                "pass".into()
-            } else {
-                "fail".into()
-            },
+            status,
             source_path: report.corpus_path,
             cases_total: report.totals.cases_total,
             cases_failed: report.totals.cases_failed,
@@ -930,15 +949,12 @@ fn collect_comparison_runs(root: &Path) -> Result<Vec<DecodeHintRunIndexEntry>> 
         let raw = fs::read_to_string(&comparison_path)?;
         let report: DecodeHintEvalComparisonReport =
             serde_json::from_str(&raw).map_err(invalid_data_error)?;
+        let status = comparison_run_status(&report).to_string();
         runs.push(DecodeHintRunIndexEntry {
             kind: "decode-hints-comparison".into(),
             run_dir: path,
             generated_at: report.generated_at,
-            status: if report.totals.newly_failing_cases > 0 || report.totals.regressed_cases > 0 {
-                "mixed".into()
-            } else {
-                "improved-or-stable".into()
-            },
+            status,
             source_path: report.right_path,
             cases_total: report.totals.shared_cases + report.totals.added_cases,
             cases_failed: report.totals.newly_failing_cases + report.totals.regressed_cases,
@@ -1326,7 +1342,23 @@ mod tests {
                 newly_failing_cases: 0,
                 unchanged_cases: 0,
             },
-            cases: vec![],
+            cases: vec![DecodeHintEvalComparisonCase {
+                id: "external-proper-noun-research".into(),
+                status: "shared".into(),
+                left_candidate_wer: Some(0.10),
+                right_candidate_wer: Some(0.10),
+                candidate_wer_delta: Some(0.0),
+                left_passed: Some(true),
+                right_passed: Some(true),
+                gained_focus_hits: vec![],
+                lost_focus_hits: vec![],
+                newly_missing_terms: vec![],
+                resolved_failures: vec![],
+                newly_allowed_failures: vec![
+                    "missing required hinted term 'garrett gunderson'".into()
+                ],
+                resolved_allowed_failures: vec![],
+            }],
         };
         let comparison_dir = comparison_root.join("2026-04-16T13-00-00Z");
         fs::create_dir_all(&comparison_dir).unwrap();
@@ -1340,9 +1372,38 @@ mod tests {
         let runs = collect_decode_hint_runs(&eval_root, &comparison_root).unwrap();
         assert_eq!(runs.len(), 2);
         assert_eq!(runs[0].kind, "decode-hints-comparison");
+        assert_eq!(runs[0].status, "allowed-failure-changed");
         assert_eq!(runs[0].source_path, PathBuf::from("/tmp/right.json"));
         assert_eq!(runs[1].kind, "decode-hints");
+        assert_eq!(runs[1].status, "fail");
         assert_eq!(runs[1].source_path, PathBuf::from("/tmp/corpus.json"));
+    }
+
+    #[test]
+    fn eval_run_status_distinguishes_allowed_failures_from_clean_passes() {
+        assert_eq!(eval_run_status(&sample_report()), "fail");
+        assert_eq!(
+            eval_run_status(&sample_allowed_failure_report()),
+            "allowed-failure"
+        );
+
+        let clean_pass = DecodeHintEvalReport {
+            generated_at: "2026-04-15T12:00:00Z".into(),
+            corpus_path: PathBuf::from("/tmp/corpus.json"),
+            options: DecodeHintEvalOptions::default(),
+            totals: DecodeHintEvalTotals {
+                cases_total: 1,
+                cases_passed: 1,
+                cases_failed: 0,
+                cases_allowed_failures: 0,
+                improved_cases: 1,
+                regressed_cases: 0,
+                average_delta_wer: -0.02,
+            },
+            cases: vec![],
+            failure_messages: vec![],
+        };
+        assert_eq!(eval_run_status(&clean_pass), "pass");
     }
 
     #[test]

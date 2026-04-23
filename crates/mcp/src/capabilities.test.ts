@@ -85,13 +85,53 @@ describe("parseCapabilityReport", () => {
     expect(report?.features.suspicious).toBeUndefined();
     expect(report?.features.also_bad).toBeUndefined();
   });
+
+  it("rejects a report with api_version newer than supported", () => {
+    const raw = JSON.stringify({
+      version: "9.9.9",
+      api_version: 2,
+      features: { activity_summary: true },
+    });
+    expect(parseCapabilityReport(raw)).toBeNull();
+  });
+
+  it("rejects a report with api_version less than 1", () => {
+    const raw = JSON.stringify({
+      version: "0.14.0",
+      api_version: 0,
+      features: { activity_summary: true },
+    });
+    expect(parseCapabilityReport(raw)).toBeNull();
+  });
+
+  it("rejects a report with non-integer api_version", () => {
+    const raw = JSON.stringify({
+      version: "0.14.0",
+      api_version: 1.5,
+      features: { activity_summary: true },
+    });
+    expect(parseCapabilityReport(raw)).toBeNull();
+  });
+
+  it("drops prototype-pollution keys in the features map", () => {
+    // Object.fromEntries + JSON.parse preserves the string key `__proto__`
+    // as a literal own property rather than touching the prototype, so we
+    // have to hand-craft the payload.
+    const raw =
+      '{"version":"0.14.0","api_version":1,"features":{"__proto__":true,"constructor":true,"prototype":true,"activity_summary":true}}';
+    const report = parseCapabilityReport(raw);
+    expect(report).not.toBeNull();
+    expect(report?.features.activity_summary).toBe(true);
+    // Polluted keys must not appear in the features map.
+    expect(Object.keys(report!.features)).toEqual(["activity_summary"]);
+  });
 });
 
 describe("hasFeature", () => {
-  it("returns true for every key when report is null (optimistic fallback)", () => {
-    expect(hasFeature(null, "activity_summary")).toBe(true);
-    expect(hasFeature(null, "anything")).toBe(true);
-    expect(hasFeature(null, "")).toBe(true);
+  it("returns false for every key when report is null (fail-closed)", () => {
+    expect(hasFeature(null, "activity_summary")).toBe(false);
+    expect(hasFeature(null, "anything")).toBe(false);
+    expect(hasFeature(null, "")).toBe(false);
   });
 
   it("returns true when feature is explicitly true", () => {

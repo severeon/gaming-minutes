@@ -468,26 +468,31 @@ fn query_overlap_via_eventkit_with_helper(
 /// Find the compiled calendar-events helper binary.
 ///
 /// Lookup order:
-/// 1. `<exe>/../Resources/calendar-events` — inside a packaged .app bundle
-///    (populated by Tauri's bundler from `tauri/src-tauri/resources/calendar-events`)
-/// 2. `<exe>/calendar-events` — beside the main binary
-/// 3. Workspace `tauri/src-tauri/resources/calendar-events` — dev fallback.
-///    `tauri/src-tauri/build.rs` compiles the Swift helper here on every
-///    `cargo tauri build` / `cargo tauri dev`, so the CLI finds it when
-///    running from source after at least one Tauri build has completed.
-/// 4. Workspace `target/release/calendar-events` — legacy dev fallback for
-///    older local workflows that compiled the helper directly into `target/`.
+/// 1. `<exe>/calendar-events` — inside a packaged .app bundle at
+///    `Contents/MacOS/calendar-events`. Tauri places it there because
+///    `tauri.macos.conf.json` declares it as an `externalBin`. This
+///    placement lets Tauri sign and notarize the helper in lockstep
+///    with the main binary. (Earlier releases declared it under
+///    `resources` which put it at `Contents/Resources/resources/` and
+///    failed notarization; see the v0.14.0 release fix.)
+/// 2. Workspace `tauri/src-tauri/bin/calendar-events` — dev fallback.
+///    `tauri/src-tauri/build.rs` compiles the Swift helper here on
+///    every `cargo tauri build` / `cargo tauri dev`, so the CLI finds
+///    it when running from source after at least one Tauri build has
+///    completed.
+/// 3. Workspace `tauri/src-tauri/resources/calendar-events` — legacy
+///    dev fallback for local workspaces that still have the old build
+///    output path cached.
+/// 4. Workspace `target/release/calendar-events` — legacy dev fallback
+///    for older local workflows that compiled the helper directly into
+///    `target/`.
 ///
-/// The workspace root is derived from `CARGO_MANIFEST_DIR` at compile time
-/// so it works regardless of where the user cloned the repo.
+/// The workspace root is derived from `CARGO_MANIFEST_DIR` at compile
+/// time so it works regardless of where the user cloned the repo.
 #[cfg(target_os = "macos")]
 fn find_calendar_helper() -> Option<std::path::PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let in_resources = dir.join("../Resources/calendar-events");
-            if in_resources.exists() {
-                return Some(in_resources);
-            }
             let beside = dir.join("calendar-events");
             if beside.exists() {
                 return Some(beside);
@@ -499,9 +504,13 @@ fn find_calendar_helper() -> Option<std::path::PathBuf> {
         .parent()
         .and_then(|p| p.parent());
     if let Some(root) = workspace_root {
-        let staged = root.join("tauri/src-tauri/resources/calendar-events");
+        let staged = root.join("tauri/src-tauri/bin/calendar-events");
         if staged.exists() {
             return Some(staged);
+        }
+        let legacy_staged = root.join("tauri/src-tauri/resources/calendar-events");
+        if legacy_staged.exists() {
+            return Some(legacy_staged);
         }
         let legacy = root.join("target/release/calendar-events");
         if legacy.exists() {

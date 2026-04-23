@@ -63,13 +63,21 @@ fn compile_calendar_helper() {
     let repo_root = manifest_dir.join("../..");
     let source = repo_root.join("scripts/calendar-events.swift");
     let info_plist = repo_root.join("scripts/calendar-helper-Info.plist");
-    let resources_dir = manifest_dir.join("resources");
-    let binary = resources_dir.join("calendar-events");
+    // Output goes to `bin/` (not `resources/`) so Tauri treats it as an
+    // externalBin. That way it lands at `Contents/MacOS/calendar-events`
+    // in the packaged .app and gets signed + notarized in lockstep with
+    // the main binary. Declaring it under `resources` in earlier
+    // releases placed it at `Contents/Resources/resources/calendar-events`
+    // unsigned, which failed notarization (see #183-followup).
+    let bin_dir = manifest_dir.join("bin");
+    let binary = bin_dir.join("calendar-events");
+    let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown-target".into());
+    let target_binary = bin_dir.join(format!("calendar-events-{}", target));
 
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed={}", info_plist.display());
 
-    fs::create_dir_all(&resources_dir).expect("failed to create tauri resources dir");
+    fs::create_dir_all(&bin_dir).expect("failed to create helper bin dir");
 
     // Mirrors `scripts/build.sh` / `scripts/install-dev-app.sh`: `-sectcreate
     // __TEXT __info_plist` embeds the plist so macOS can display the
@@ -93,6 +101,12 @@ fn compile_calendar_helper() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    // Tauri's externalBin convention looks for `<base>-<target-triple>`,
+    // so copy the fresh build to the target-suffixed path alongside the
+    // base filename. Matches `compile_system_audio_helper` above.
+    fs::copy(&binary, &target_binary)
+        .expect("failed to copy target-specific calendar-events helper");
 }
 
 fn stage_assistant_skill_bundle() {
